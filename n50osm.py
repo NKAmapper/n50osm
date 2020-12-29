@@ -1,11 +1,10 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf8
 
 
-import urllib
-import urllib2
+import urllib.request, urllib.parse, urllib.error
 import zipfile
-import StringIO
+from io import BytesIO
 import json
 import csv
 import copy
@@ -16,7 +15,7 @@ from xml.etree import ElementTree as ET
 import utm
 
 
-version = "0.3.0"
+version = "0.4.0"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -163,7 +162,7 @@ def tag_object(feature_type, geometry_type, properties, feature):
 						tags['operator'] = "Statskog"
 						
 			elif properties['bygningstype'] in building_tags:
-				for key, value in building_tags[ properties['bygningstype'] ].iteritems():
+				for key, value in iter(building_tags[ properties['bygningstype'] ].items()):
 					if geometry_type == u"område" or key != "building" or len(building_tags[ properties['bygningstype'] ]) > 1:
 						tags[ key ] = value
 
@@ -488,13 +487,13 @@ def get_municipality_name (query):
 	if query.isdigit():
 		url = "https://ws.geonorge.no/kommuneinfo/v1/kommuner/" + query
 	else:
-		url = "https://ws.geonorge.no/kommuneinfo/v1/sok?knavn=" + urllib.quote(query.encode("utf-8"))
+		url = "https://ws.geonorge.no/kommuneinfo/v1/sok?knavn=" + urllib.parse.quote(query)
 
-	request = urllib2.Request(url, headers=header)
+	request = urllib.request.Request(url, headers=header)
 
 	try:
-		file = urllib2.urlopen(request)
-	except urllib2.HTTPError, e:
+		file = urllib.request.urlopen(request)
+	except urllib.error.HTTPError as e:
 		if e.code == 404:  # Not found
 			sys.exit("\tMunicipality '%s' not found\n\n" % query)
 		else:
@@ -614,9 +613,9 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 						.replace(u"æ","e").replace(u"ø","o").replace(u"å","a").replace(" ", "_")
 	message ("\tLoading file '%s'\n" % filename)
 
-	request = urllib2.Request("https://nedlasting.geonorge.no/geonorge/Basisdata/N50Kartdata/GML/" + filename + ".zip", headers=header)
-	file_in = urllib2.urlopen(request)
-	zip_file = zipfile.ZipFile(StringIO.StringIO(file_in.read()))
+	request = urllib.request.Request("https://nedlasting.geonorge.no/geonorge/Basisdata/N50Kartdata/GML/" + filename + ".zip", headers=header)
+	file_in = urllib.request.urlopen(request)
+	zip_file = zipfile.ZipFile(BytesIO(file_in.read()))
 
 #	for file_entry in zip_file.namelist():
 #		message ("\t%s\n" % file_entry)
@@ -746,7 +745,7 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 			missing_tags.update(new_missing_tags)
 
 			if n50_tags and not debug:
-				for key, value in properties.iteritems():
+				for key, value in iter(properties.items()):
 					if key not in avoid_tags:
 						entry['tags'][ "N50_" + key ] = value
 
@@ -1276,17 +1275,17 @@ def get_elevation(node):
 	if node in elevations:
 		return elevations[ node ]
 
-	request = urllib2.Request(url, headers=header)
+	request = urllib.request.Request(url, headers=header)
 
 	max_retry = 5
 	for retry in range(1, max_retry + 1):
 		try:
-			file = urllib2.urlopen(request)
+			file = urllib.request.urlopen(request)
 			if retry > 1:
 				message ("\n")
 			break
 
-		except urllib2.HTTPError, e:
+		except urllib.error.HTTPError as e:
 			if retry < max_retry:
 				message ("\tRetry #%i " % retry)
 				time.sleep(2 ** (retry-1))  # First retry after 1 second
@@ -1471,8 +1470,8 @@ def get_place_names():
 	# Load all SSR place names in municipality, if file option
 
 	url = "https://obtitus.github.io/ssr2_to_osm_data/data/%s/%s.osm" % (municipality_id, municipality_id)
-	request = urllib2.Request(url, headers=header)
-	file = urllib2.urlopen(request)
+	request = urllib.request.Request(url, headers=header)
+	file = urllib.request.urlopen(request)
 
 	tree = ET.parse(file)
 	file.close()
@@ -1603,8 +1602,8 @@ def get_nve_lakes():
 				"where=kommNr%%3D%%27%s%%27&outFields=vatnLnr%%2Cnavn%%2Choyde%%2Careal_km2%%2CmagasinNr&returnGeometry=false&resultOffset=%i&resultRecordCount=1000&f=json" \
 					% (municipality_id, nve_lake_count)
 
-		request = urllib2.Request(url, headers=header)
-		file = urllib2.urlopen(request)
+		request = urllib.request.Request(url, headers=header)
+		file = urllib.request.urlopen(request)
 		lake_data = json.load(file)
 		file.close()
 
@@ -1721,12 +1720,12 @@ def save_osm(filename):
 					node_count += 1
 				osm_feature.append(osm_nd)
 
-			for key, value in segment['tags'].iteritems():
+			for key, value in iter(segment['tags'].items()):
 				osm_tag = ET.Element("tag", k=key, v=value)
 				osm_feature.append(osm_tag)
 
 			if debug:
-				for key, value in segment['extras'].iteritems():
+				for key, value in iter(segment['extras'].items()):
 					osm_tag = ET.Element("tag", k=key.upper(), v=value)
 					osm_feature.append(osm_tag)
 
@@ -1786,12 +1785,12 @@ def save_osm(filename):
 		else:
 			message ("\t*** UNKNOWN GEOMETRY: %s\n" % feature['type'])
 
-		for key, value in feature['tags'].iteritems():
+		for key, value in iter(feature['tags'].items()):
 			osm_tag = ET.Element("tag", k=key, v=value)
 			osm_feature.append(osm_tag)
 
 		if debug:
-			for key, value in feature['extras'].iteritems():
+			for key, value in iter(feature['extras'].items()):
 				osm_tag = ET.Element("tag", k=key.upper(), v=value)
 				osm_feature.append(osm_tag)
 
@@ -1835,7 +1834,7 @@ if __name__ == '__main__':
 
 	# Get municipality
 
-	municipality_query = sys.argv[1].decode("utf-8")
+	municipality_query = sys.argv[1]
 	[municipality_id, municipality_name] = get_municipality_name(municipality_query)
 	if municipality_id is None:
 		sys.exit("Municipality '%s' not found\n" % municipality_query)
@@ -1898,5 +1897,3 @@ if __name__ == '__main__':
 
 	duration = time.time() - start_time
 	message ("\tTotal run time %s (%i features per second)\n\n" % (timeformat(duration), int(len(features) / duration)))
-
-
