@@ -422,13 +422,13 @@ def LatLonToUtm(lat, lon):
     '''
  
     if ((lon < -180.0) or (180.0 <= lon)):
-        print 'The longitude you entered is out of range -', lon
-        print 'Please enter a number in the range [-180, 180).'
+        print ('The longitude you entered is out of range -', lon)
+        print ('Please enter a number in the range [-180, 180).')
         return 0
  
     if ((lat < -90.0) or (90.0 < lat)):
-        print 'The latitude you entered is out of range -', lat
-        print 'Please enter a number in the range [-90, 90].'
+        print ('The latitude you entered is out of range -', lat)
+        print ('Please enter a number in the range [-90, 90].')
  
     # Compute the UTM zone.
     zone = math.floor ((lon + 180.0) / 6) + 1
@@ -458,13 +458,13 @@ def UtmToLatLon(x, y, zone, hemi):
     latlong - [lattitude, longitude] (in degrees)
     '''
     if ((zone < 1) or (60 < zone)):
-        print 'The UTM zone you entered is out of range -', zone
-        print 'Please enter a number in the range [1, 60].'
+        print ('The UTM zone you entered is out of range -', zone)
+        print ('Please enter a number in the range [1, 60].')
         return 0
  
     if ((hemi != 'N') and (hemi != 'S')):
-        print 'The hemisphere you entered is wrong -', hemi
-        print 'Please enter N or S'
+        print ('The hemisphere you entered is wrong -', hemi)
+        print ('Please enter N or S')
  
     southhemi = False
     if (hemi == 'S'):
