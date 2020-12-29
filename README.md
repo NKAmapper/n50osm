@@ -48,6 +48,10 @@ The *utm.py* and *building_types.csv* files should be located in the same folder
   * Add the *source=Kartverket* tag if you would like to rune the merge script from [topo2osm](https://github.com/osmno/topo2osm).
   * A few fixme tags are produces for streams which need manual inspection regarding downhill direction, as well as for place names whenever SSR contains more than one approved name for an object.
 
+### Changelog
+
+* 0.4: Code converted to Python 3.
+
 ### References ###
 
 * [Kartverket N50 product description](https://register.geonorge.no/register/versjoner/produktspesifikasjoner/kartverket/n50-kartdata)
