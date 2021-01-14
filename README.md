@@ -33,7 +33,7 @@ The *utm.py* and *building_types.csv* files should be located in the same folder
   * The N50 topology data is loaded from Kartverket. OSM relations are automatically created.
   * Lake data is loaded from NVE.
   * Elevation data is loaded from a Kartverket api (not from the elevation DEM or TIFF files).
-  * Place nanmes are loaded from the [SSR import files](https://wiki.openstreetmap.org/wiki/No:Import_av_stedsnavn_fra_SSR2) created by the OSM community.
+  * Place names are loaded from the [SSR import files](https://wiki.openstreetmap.org/wiki/No:Import_av_stedsnavn_fra_SSR2) created by the OSM community.
   * Buildings are tagged according to the building type CSV file on GitHub.
   * The program has an exponential complexity. Most municipalities will run in a few seconds, large municipalities will run in minutes (for example Vinje in 30 mins), while the largest municipalities might require several hours to complete. The elevation api is slow, currently running at 1 elevation per second (per stream and lake).
 * This program is a supplement to [topo2osm](https://github.com/osmno/topo2osm). The main differences are:
@@ -44,9 +44,9 @@ The *utm.py* and *building_types.csv* files should be located in the same folder
   * N50 categories other than "Arealdekke", such as peaks, quays, piers, dams and public services, are also processed.
   * A few enhancements, such as correct direction of coastline, removal of duplicate nodes and relations.
 * Notes for the import process:
-  * Only one file for the entire municipality is produces. Please copy into suitable sections when importing.
-  * Add the *source=Kartverket* tag if you would like to rune the merge script from [topo2osm](https://github.com/osmno/topo2osm).
-  * A few fixme tags are produces for streams which need manual inspection regarding downhill direction, as well as for place names whenever SSR contains more than one approved name for an object.
+  * Only one file for the entire municipality is produced. Please split into suitable sections when importing.
+  * Add the *source=Kartverket* tag if you would like to run the merge script from [topo2osm](https://github.com/osmno/topo2osm).
+  * A few fixme tags are produced for streams which need manual inspection regarding downhill direction, as well as for place names whenever SSR contains more than one approved name for an object.
 
 ### Changelog
 
