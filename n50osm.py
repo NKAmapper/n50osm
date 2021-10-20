@@ -15,7 +15,7 @@ from xml.etree import ElementTree as ET
 import utm
 
 
-version = "0.4.0"
+version = "0.5.0"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -28,18 +28,18 @@ lake_ele_size = 2000  # Minimum square meters for fetching elevation
 data_categories = ["AdministrativeOmrader", "Arealdekke", "BygningerOgAnlegg", "Hoyde", "Restriksjonsomrader", "Samferdsel", "Stedsnavn"]
 
 avoid_objects = [  # Object types to exclude from output
-	u'ÅpentOmråde', 'Tregruppe',  # Arealdekke
+	'ÅpentOmråde', 'Tregruppe',  # Arealdekke
 	'GangSykkelveg', 'VegSenterlinje', 'Vegsperring',  # Samferdsel
-	'Forsenkningskurve', 'Hjelpekurve', u'Høydekurve',  # Hoyde
+	'Forsenkningskurve', 'Hjelpekurve', 'Høydekurve',  # Hoyde
 	'PresentasjonTekst'  # Stedsnavn
 ]
 
 auxiliary_objects = ['Arealbrukgrense', 'Dataavgrensning', 'FiktivDelelinje', \
-					u'InnsjøElvSperre', u'InnsjøInnsjøSperre', 'ElvBekkKant', 'Havflate', u'Innsjøkant', u'InnsjøkantRegulert', u'FerskvannTørrfallkant']
+					'InnsjøElvSperre', 'InnsjøInnsjøSperre', 'ElvBekkKant', 'Havflate', 'Innsjøkant', 'InnsjøkantRegulert', 'FerskvannTørrfallkant']
 
 avoid_tags = [  # N50 properties to exclude from output (unless debug)
 	'oppdateringsdato', 'datafangstdato',
-	u'målemetode', u'nøyaktighet'
+	'målemetode', 'nøyaktighet'
 ]
 
 
@@ -50,25 +50,25 @@ osm_tags = {
 	'BymessigBebyggelse':	{ 'landuse': 'retail' },  #'landuse': 'residential', 'residential': 'urban' },
 	'DyrketMark':			{ 'landuse': 'farmland' },
 	'ElvBekk':				{ 'waterway': 'stream' },
-	u'FerskvannTørrfall':	{ 'waterway': 'riverbank', 'intermittent': 'yes' },
+	'FerskvannTørrfall':	{ 'waterway': 'riverbank', 'intermittent': 'yes' },
 	'Foss':					{ 'waterway': 'waterfall' },
 	'Golfbane':				{ 'leisure': 'golf_course' },
 	'Gravplass':			{ 'landuse': 'cemetery' },
 	'HavElvSperre':			{ 'natural': 'coastline' },
-	u'HavInnsjøSperre':		{ 'natural': 'coastline' },
+	'HavInnsjøSperre':		{ 'natural': 'coastline' },
 	'Hyttefelt':			{ 'landuse': 'residential', 'residential': 'cabin' },
-	u'Industriområde':		{ 'landuse': 'industrial' },
-	u'Innsjø':				{ 'natural': 'water' },
-	u'InnsjøRegulert':		{ 'natural': 'water', 'water': 'reservoir' },
+	'Industriområde':		{ 'landuse': 'industrial' },
+	'Innsjø':				{ 'natural': 'water' },
+	'InnsjøRegulert':		{ 'natural': 'water', 'water': 'reservoir' },
 	'Kystkontur':			{ 'natural': 'coastline' },
 	'Lufthavn':				{ 'aeroway': 'aerodrome' },
 	'Myr':					{ 'natural': 'wetland', 'wetland': 'bog' },
 	'Park':					{ 'leisure': 'park' },
 	'Rullebane':			{ 'aeroway': 'runway' },
-	u'Skjær':				{ 'seamark:type': 'rock' },
+	'Skjær':				{ 'seamark:type': 'rock' },
 	'Skog':					{ 'natural': 'wood' },
 	'Skytefelt':			{ 'leisure': 'pitch', 'sport': 'shooting' },
-	u'SnøIsbre':			{ 'natural': 'glacier' },
+	'SnøIsbre':				{ 'natural': 'glacier' },
 	'SportIdrettPlass':		{ 'leisure': 'pitch' },
 	'Steinbrudd':			{ 'landuse': 'quarry'},
 	'Steintipp':			{ 'landuse': 'landfill' },
@@ -76,7 +76,7 @@ osm_tags = {
 
 	# Samferdsel
 
-	u'Barmarksløype':		{ 'highway': 'track' },
+	'Barmarksløype':		{ 'highway': 'track' },
 	'Traktorveg':			{ 'highway': 'track' },
 	'Sti':					{ 'highway': 'path' },
 
@@ -87,7 +87,7 @@ osm_tags = {
 
 	# Restriksjonsomrader
 
-	u'Naturvernområde':		{ 'boundary': 'protected_area' },
+	'Naturvernområde':		{ 'boundary': 'protected_area' },
 	'Allmenning':			{ 'boundary': 'protected_area', 'protect_class': '27'},  # Public land
 
 	# BygningerOgAnlegg
@@ -101,19 +101,19 @@ osm_tags = {
 	'KaiBrygge':			{ 'man_made': 'quay' },
 	'Ledning':				{ 'power': 'line' },
 	'LuftledningLH':		{ 'power': 'line' },
-	u'Lysløype':			{ 'highway': 'track', 'lit': 'yes', 'trailblazed': 'yes' },
+	'Lysløype':				{ 'highway': 'track', 'lit': 'yes', 'trailblazed': 'yes' },
 	'MastTele':				{ 'man_made': 'mast', 'tower:type': 'communication' },
 	'Molo':					{ 'man_made': 'breakwater' },
 	'Navigasjonsinstallasjon':	{ 'man_made': 'lighthouse' },  # Only lighthouses, it seems
-	u'Parkeringsområde':	{ 'amenity': 'parking' },
+	'Parkeringsområde':		{ 'amenity': 'parking' },
 	'Pir':					{ 'man_made': 'pier' },
 	'Reingjerde':			{ 'barrier': 'fence' },
-	u'Rørgate':				{ 'man_made': 'pipeline' },  # Also "tømmerrenne"
+	'Rørgate':				{ 'man_made': 'pipeline' },  # Also "tømmerrenne"
 	'Skitrekk':				{ 'aerialway': 'drag_lift' },  # Could be other aerialway values
 	'Skytebaneinnretning':	{ 'leisure': 'pitch', 'sport': 'shooting' },
 	'Tank':					{ 'man_made': 'tank' },
 	'Taubane':				{ 'aerialway': 'cable_car' },  # Could be other aerial values, e.g. gondola, goods
-	u'Tårn':				{ 'man_made': 'tower' },  # Any massive or substantial tower
+	'Tårn':					{ 'man_made': 'tower' },  # Any massive or substantial tower
 	'Vindkraftverk':		{ 'power': 'generator', 'generator:source': 'wind', 'generator:type': 'horizontal_axis' }
 }
 
@@ -129,7 +129,7 @@ def tag_object(feature_type, geometry_type, properties, feature):
 	# First special object cases
 
 	if feature_type == "ElvBekk":
-		if geometry_type == u"område":
+		if geometry_type == "område":
 			tags['waterway'] = "riverbank"
 		elif "vannBredde" in properties and properties['vannBredde'] > "2":  # >3 meter
 			tags['waterway'] = "river"
@@ -163,7 +163,7 @@ def tag_object(feature_type, geometry_type, properties, feature):
 						
 			elif properties['bygningstype'] in building_tags:
 				for key, value in iter(building_tags[ properties['bygningstype'] ].items()):
-					if geometry_type == u"område" or key != "building" or len(building_tags[ properties['bygningstype'] ]) > 1:
+					if geometry_type == "område" or key != "building" or len(building_tags[ properties['bygningstype'] ]) > 1:
 						tags[ key ] = value
 
 		if geometry_type != "posisjon" and "building" not in tags:
@@ -186,7 +186,7 @@ def tag_object(feature_type, geometry_type, properties, feature):
 		if "icaoKode" in properties and properties['icaoKode'] != "XXXX":
 			tags['icao'] = properties['icaoKode']			
 
-	elif geometry_type == u"område" and feature_type == "SportIdrettPlass":
+	elif geometry_type == "område" and feature_type == "SportIdrettPlass":
 		if len(feature['coordinates']) > 1:
 			tags['leisure'] = "track"
 			tags['area'] = "yes"
@@ -205,12 +205,12 @@ def tag_object(feature_type, geometry_type, properties, feature):
 
 	# Additional tagging based on object properties from GML
 
-	if u"høyde" in properties:
-		tags['ele'] = properties[u'høyde']
+	if "høyde" in properties:
+		tags['ele'] = properties['høyde']
 	if "lavesteRegulerteVannstand" in properties:
 		tags['ele:min'] = properties['lavesteRegulerteVannstand']
-	if u"vatnLøpenummer" in properties:
-		tags['ref:nve:vann'] = properties[u'vatnLøpenummer']
+	if "vatnLøpenummer" in properties:
+		tags['ref:nve:vann'] = properties['vatnLøpenummer']
 
 	if "navn" in properties:
 		tags['name'] = properties['navn']
@@ -526,7 +526,7 @@ def load_building_types():
 
 	file = open("building_types.csv")
 	building_csv = csv.DictReader(file, fieldnames=["id", "name", "osm_tag"], delimiter=";")
-	building_csv.next()
+	next(building_csv)
 
 	for row in building_csv:
 		if row['osm_tag']:
@@ -609,8 +609,8 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 	# Load latest N50 file for municipality from Kartverket
 
 	filename = "Basisdata_%s_%s_25833_N50Kartdata_GML" % (municipality_id, municipality_name)
-	filename = filename.replace(u"Æ","E").replace(u"Ø","O").replace(u"Å","A")\
-						.replace(u"æ","e").replace(u"ø","o").replace(u"å","a").replace(" ", "_")
+	filename = filename.replace("Æ","E").replace("Ø","O").replace("Å","A")\
+						.replace("æ","e").replace("ø","o").replace("å","a").replace(" ", "_")
 	message ("\tLoading file '%s'\n" % filename)
 
 	request = urllib.request.Request("https://nedlasting.geonorge.no/geonorge/Basisdata/N50Kartdata/GML/" + filename + ".zip", headers=header)
@@ -672,7 +672,7 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 				# Get app properties/attributes
 
 				tag = app.tag[ len(ns_app)+2 : ]
-				if tag in ['posisjon', 'grense', u'område', 'senterlinje', 'geometri']:
+				if tag in ['posisjon', 'grense', 'område', 'senterlinje', 'geometri']:
 					geometry_type = tag
 					entry['extras']['geometri'] = geometry_type
 				else:
@@ -753,7 +753,7 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 
 			if not (entry['type'] == "LineString" and len(entry['coordinates']) <= 1):
 				if geometry_type == "grense":
-					if feature_type in ["Kystkontur", "HavElvSperre", u"HavInnsjøSperre"]:
+					if feature_type in ["Kystkontur", "HavElvSperre", "HavInnsjøSperre"]:
 						entry['used'] = 1
 					else:
 						entry['used'] = 0
@@ -914,9 +914,9 @@ def split_polygons():
 						# Correct direction of coastline, lakes and riverways
 
 						if feature['object'] == "Havflate" and \
-							segment['object'] in ["Kystkontur", "HavElvSperre", u"HavInnsjøSperre"] or \
-							feature['object'] in [u"Innsjø", u"InnsjøRegulert", "ElvBekk", u'FerskvannTørrfall'] and \
-							segment['object'] in [u"Innsjøkant", u"InnsjøkantRegulert", "ElvBekkKant", "KantUtsnitt"]:
+							segment['object'] in ["Kystkontur", "HavElvSperre", "HavInnsjøSperre"] or \
+							feature['object'] in ["Innsjø", "InnsjøRegulert", "ElvBekk", 'FerskvannTørrfall'] and \
+							segment['object'] in ["Innsjøkant", "InnsjøkantRegulert", "ElvBekkKant", "KantUtsnitt"]:
 
 							segment['used'] += 1
 							node1 = patch.index(segment['coordinates'][0])
@@ -967,10 +967,10 @@ def find_islands():
 	candidates = []
 	for feature in features:
 		if len(feature['members']) == 1 and len(feature['members'][0]) > 1 and \
-				feature['object'] not in [u"Innsjø", u"InnsjøRegulert", "ElvBekk", "Havflate", u"FerskvannTørrfall"]:
+				feature['object'] not in ["Innsjø", "InnsjøRegulert", "ElvBekk", "Havflate", "FerskvannTørrfall"]:
 			found = True
 			for member in feature['members'][0]:
-				if segments[ member ]['object'] not in ['Kystkontur', u"Innsjøkant", u"InnsjøkantRegulert", "ElvBekkKant"]:
+				if segments[ member ]['object'] not in ['Kystkontur', "Innsjøkant", "InnsjøkantRegulert", "ElvBekkKant"]:
 					found = False
 					break
 			if found:
@@ -979,14 +979,14 @@ def find_islands():
 	# Loop all inner objects of multipolygon lakes and sea
 
 	for feature in features:
-		if feature['object'] in [u"Innsjø", u"InnsjøRegulert", "ElvBekk", "Havflate", u"FerskvannTørrfall"]:
+		if feature['object'] in ["Innsjø", "InnsjøRegulert", "ElvBekk", "Havflate", "FerskvannTørrfall"]:
 			for i in range(1, len(feature['members'])):
 
 				# Do not use patch with intermittent edge
 
 				found = True
 				for member in feature['members'][i]:
-					if segments[ member ]['object'] == u"FerskvannTørrfallkant":
+					if segments[ member ]['object'] == "FerskvannTørrfallkant":
 						found = False
 						break
 				if not found:
@@ -1025,7 +1025,7 @@ def find_islands():
 
 					if not found:
 						entry = {
-							'object': u"Øy",
+							'object': "Øy",
 							'type': 'Polygon',
 							'coordinates': copy.deepcopy(feature['coordinates'][i]),
 							'members': [ copy.deepcopy(feature['members'][i]) ],
@@ -1045,19 +1045,19 @@ def find_islands():
 
 	coastlines = []
 #	for i, segment in enumerate(segments):
-#		if segment['object'] in ["Kystkontur", u"Innsjøkant", u"InnsjøkantRegulert", "ElvBekkKant"] and i not in used_segments:
+#		if segment['object'] in ["Kystkontur", "Innsjøkant", "InnsjøkantRegulert", "ElvBekkKant"] and i not in used_segments:
 #			coastlines.append(segment)
 
 	for feature in features:
-		if feature['object'] in ["Havflate", u"Innsjø", u"InnsjøRegulert", "ElvBekk", u"FerskvannTørrfall"] and \
+		if feature['object'] in ["Havflate", "Innsjø", "InnsjøRegulert", "ElvBekk", "FerskvannTørrfall"] and \
 				len(feature['members']) > 0:
 			for member in feature['members'][0]:  # Only outer patch
 				segment = segments[ member ]
-				if segment['object'] in ["HavElvSperre", u"HavInnsjøSperre", u"InnsjøInnsjøSperre", \
-										u"InnsjøElvSperre", u"FerskvannTørrfallkant", "FiktivDelelinje"]:
+				if segment['object'] in ["HavElvSperre", "HavInnsjøSperre", "InnsjøInnsjøSperre", \
+										"InnsjøElvSperre", "FerskvannTørrfallkant", "FiktivDelelinje"]:
 					for member2 in feature['members'][0]:
 						segment2 = segments[ member2 ]
-						if segment2['object'] in ["Kystkontur", u"Innsjøkant", u"InnsjøkantRegulert", "ElvBekkKant"]:
+						if segment2['object'] in ["Kystkontur", "Innsjøkant", "InnsjøkantRegulert", "ElvBekkKant"]:
 							coastlines.append(segment2)
 					break
 
@@ -1131,7 +1131,7 @@ def find_islands():
 
 			if not found:
 				entry = {
-					'object': u"Øy",
+					'object': "Øy",
 					'type': 'Polygon',
 					'coordinates': [ coordinates ],
 					'members': [ members ],
@@ -1238,7 +1238,7 @@ def match_nodes():
 
 							# Else create new common node with "water" segments (or reuse existing common node)
 
-							elif segment['object'] in ["Kystkontur", u"Innsjøkant", u"InnsjøkantRegulert", "ElvBekkKant"]:
+							elif segment['object'] in ["Kystkontur", "Innsjøkant", "InnsjøkantRegulert", "ElvBekkKant"]:
 								nodes.add( node )
 
 	# Loop auxiliary lines and simplify geometry
@@ -1252,12 +1252,13 @@ def match_nodes():
 	message ("\tRun time %s\n" % (timeformat(time.time() - lap)))
 
 
+# OLD:
 # Get elevation for a given node/coordinate
 # API reference: https://kartverket.no/api-og-data/friluftsliv/hoydeprofil
 # 	and: https://wms.geonorge.no/skwms1/wps.elevation2?request=DescribeProcess&service=WPS&version=1.0.0&identifier=elevation
-# Note: Slow api, to be replaced by Kartverket end of 2020
+# Note: Slow api (approx 1.4 calls/second), to be replaced by Kartverket end of 2020
 
-def get_elevation(node):
+def get_elevation_old(node):
 
 	global elevations, ele_count, retry_count
 
@@ -1311,8 +1312,50 @@ def get_elevation(node):
 
 	ele_tag = root.find('ns0:ProcessOutputs/ns0:Output[ns2:Identifier="elevation"]/ns0:Data/ns0:LiteralData', ns)
 	ele = float(ele_tag.text)
+
+	if math.isnan(ele):
+		ele = None
+	if ele is None:
+		message (" *** NO ELEVATION: %s \n" % str(node))
+
 	elevations[ node ] = ele  # Store for possible identical request later
 	ele_count += 1
+
+	return ele
+
+
+
+# NEW:
+# Get elevation for a given node/coordinate
+# Note: Still testing this api
+# Note: Slow api, approx 4 calls / second
+
+def get_elevation(node):
+
+	global elevations, ele_count, retry_count
+
+	url = "https://ws.geonorge.no/hoydedata/v1/punkt?nord=%f&ost=%f&geojson=false&koordsys=4258" % (node[1], node[0])
+#	url = "https://wstest.geonorge.no/hoydedata/v1/punkt?nord=%f&ost=%f&geojson=false&koordsys=4258" % (node[1], node[0])
+#	url =  "https://wstest.geonorge.no/hoydedata/v1/punkt?nord=60.1&koordsys=4258&geojson=false&ost=11.1"
+#	message ("%s\n" % url)
+
+	if node in elevations:
+		return elevations[ node ]
+
+	request = urllib.request.Request(url, headers=header)
+	file = urllib.request.urlopen(request)
+
+	result = json.load(file)
+	file.close()
+#	message ("Result: %s\n" % str(result))
+#	ele = result['features'][0]['geometry']['coordinates'][2]
+	ele = result['punkter'][0]['z']
+	elevations[ node ] = ele  # Store for possible identical request later
+	ele_count += 1
+
+	if ele is None:
+		message (" *** NO ELEVATION: %s \n" % str(result))
+#		ele = 0.0
 
 	return ele
 
@@ -1348,24 +1391,24 @@ def fix_stream_direction():
 		if feature['object'] == "ElvBekk" and feature['type'] == "LineString":
 			api_count -= 1
 
-			message ("\r             \r\t%i" % api_count)
+			message ("\r\t%i " % api_count)
 
 			ele_start = get_elevation(feature['coordinates'][0])
 			if ele_start is None:
-				break
+				continue
 
 			ele_end = get_elevation(feature['coordinates'][-1])
 			if ele_end is None:
-				break
+				continue
 
 			# Reverse direction of stream if within error margin
 
 			if ele_end - ele_start >= max_error:
 				feature['coordinates'].reverse()
 				reverse_count += 1
-				feature['extras']['reversert'] = str(ele_end - ele_start)
+				feature['extras']['reversert'] = "%.2f" % (ele_end - ele_start)
 			else:
-				feature['extras']['bekk'] = str(ele_end - ele_start)
+				feature['extras']['bekk'] = "%.2f" % (ele_end - ele_start)
 
 			if abs(ele_end - ele_start) < 2 * max_error:
 				feature['tags']['fixme'] = "Please check direction (%.1fm elevation)" % (ele_end - ele_start)
@@ -1374,7 +1417,7 @@ def fix_stream_direction():
 		message ("\t%i retry to api\n" % retry_count)
 
 	duration = time.time() - lap
-	message ("\r  %i streams, %i reversed, %i api calls\n" \
+	message ("\r\t%i streams, %i reversed, %i api calls\n" \
 				% (stream_count, reverse_count, ele_count))
 	message ("\tRun time %s, %.2f streams per second\n" % (timeformat(duration), stream_count / duration))
 
@@ -1414,16 +1457,16 @@ def get_ssr_name (feature, name_categories):
 		found_names.sort(key=lambda name: name_categories.index(name['tags']['ssr:type']))  # place_name_rank(name, name_categories))
 
 		alt_names = []
-		sea = (u"Sjø" in found_names[0]['tags']['ssr:type'])
+		sea = ("Sjø" in found_names[0]['tags']['ssr:type'])
 		for place in found_names:
-			if not sea or u"Sjø" in place['tags']['ssr:type']:
+			if not sea or "Sjø" in place['tags']['ssr:type']:
 				alt_names.append("%s [%s %s]" % (place['tags']['name'], place['tags']['ssr:type'], place['tags']['ssr:stedsnr']))
 
 		if len(alt_names) == 1 and \
 				not ("name" in feature['tags'] and feature['tags']['name'] != found_names[0]['tags']['name']) or \
-				u"øyISjø" in found_names[0]['tags']['ssr:type'] and u"øyISjø" not in found_names[1]['tags']['ssr:type'] or \
-				u"øy" in found_names[0]['tags']['ssr:type'] and u"øy" not in found_names[1]['tags']['ssr:type'] or \
-				"holme" in found_names[0]['tags']['ssr:type'] and u"holme" not in found_names[1]['tags']['ssr:type']:
+				"øyISjø" in found_names[0]['tags']['ssr:type'] and "øyISjø" not in found_names[1]['tags']['ssr:type'] or \
+				"øy" in found_names[0]['tags']['ssr:type'] and "øy" not in found_names[1]['tags']['ssr:type'] or \
+				"holme" in found_names[0]['tags']['ssr:type'] and "holme" not in found_names[1]['tags']['ssr:type']:
 
 			feature['tags'].update(found_names[0]['tags'])
 			feature['extras']['ssr:type'] = feature['tags'].pop("ssr:type", None)
@@ -1467,7 +1510,7 @@ def get_place_names():
 	name_count = 0
 	ssr_places = []
 
-	# Load all SSR place names in municipality, if file option
+	# Load all SSR place names in municipality
 
 	url = "https://obtitus.github.io/ssr2_to_osm_data/data/%s/%s.osm" % (municipality_id, municipality_id)
 	request = urllib.request.Request(url, headers=header)
@@ -1496,7 +1539,7 @@ def get_place_names():
 
 	# Get island names
 
-	name_category = [u"øyISjø", u"øygruppeISjø", u"holmeISjø", u"skjærISjø", u"øy", u"øygruppe", "holme", u"skjær"]
+	name_category = ["øyISjø", "øygruppeISjø", "holmeISjø", "skjærISjø", "øy", "øygruppe", "holme", "skjær"]
 	for elements in [segments, features]:
 		for element in elements:
 			if "place" in element['tags'] and element['tags']['place'] in ["island", "islet"]:
@@ -1507,11 +1550,11 @@ def get_place_names():
 	if lake_ele and data_category == "Arealdekke":
 		message ("\tLoading lake elevations...\n")
 
-	name_category = [u"innsjø", u"delAvInnsjø", "vann", "gruppeAvVann", "kanal", "gruppeAvTjern", "tjern", "lon", "pytt"]
+	name_category = ["innsjø", "delAvInnsjø", "vann", "gruppeAvVann", "kanal", "gruppeAvTjern", "tjern", "lon", "pytt"]
 	lake_ele_count = 0
 
 	for feature in features:
-		if feature['object'] in [u"Innsjø", u"InnsjøRegulert"]:
+		if feature['object'] in ["Innsjø", "InnsjøRegulert"]:
 
 			lake_node = get_ssr_name(feature, name_category)
 			area = abs(multipolygon_area(feature['coordinates']))
@@ -1546,15 +1589,16 @@ def get_place_names():
 						feature['tags']['ele'] = str(int(round(ele)))
 						create_point(lake_node, "", "elevation %.1f" % ele)
 						lake_ele_count += 1
+						message ("\r\t%i " % lake_ele_count)
 
 	# Create lake centroid nodes for debugging
 	for feature in features:
-		if feature['object'] in [u"Innsjø", u"InnsjøRegulert"]:
+		if feature['object'] in ["Innsjø", "InnsjøRegulert"]:
 			centroid = polygon_centroid(feature['coordinates'][0])
 			create_point(centroid, feature['gml_id'], "centroid")
 
 	# Get glacier names
-	get_category_place_names([u"SnøIsbre"], ["isbre", "fonn", "iskuppel"])
+	get_category_place_names(["SnøIsbre"], ["isbre", "fonn", "iskuppel"])
 
 	# Get wetland names
 	get_category_place_names(["Myr"], ["myr"])
@@ -1571,7 +1615,7 @@ def get_place_names():
 	# Get waterfall (point)
 	get_category_place_names(["Foss"], ["foss", "stryk"])
 
-	message ("\t%i place names found\n" % name_count)
+	message ("\r\t%i place names found\n" % name_count)
 	if lake_ele:
 		message ("\t%i lake elevations found\n" % lake_ele_count)
 	message ("\tRun time %s\n" % (timeformat(time.time() - lap)))
@@ -1638,7 +1682,7 @@ def get_nve_lakes():
 					feature['tags']['ref:nve:magasin'] = str(lakes[ref]['mag_id'])
 				feature['extras']['nve_areal'] = str(int(lakes[ref]['area'] * 1000000))  # Square meters
 
-		if feature['object'] in [u"Innsjø", u"InnsjøRegulert"]:
+		if feature['object'] in ["Innsjø", "InnsjøRegulert"]:
 			n50_lake_count += 1
 
 	message ("\t%i N50 lakes matched against %i NVE lakes\n" % (n50_lake_count, nve_lake_count))
@@ -1673,6 +1717,26 @@ def save_geojson(filename):
 	file.close()
 
 	message ("\t%i features saved\n" % len(features))
+
+
+
+# Indent XML output
+
+def indent_tree(elem, level=0):
+    i = "\n" + level*"  "
+    if len(elem):
+        if not elem.text or not elem.text.strip():
+            elem.text = i + "  "
+        if not elem.tail or not elem.tail.strip():
+            elem.tail = i
+        for elem in elem:
+            indent_tree(elem, level+1)
+        if not elem.tail or not elem.tail.strip():
+            elem.tail = i
+    else:
+        if level and (not elem.tail or not elem.tail.strip()):
+            elem.tail = i
+
 
 
 # Save osm file
@@ -1796,6 +1860,7 @@ def save_osm(filename):
 
 
 	osm_root.set("upload", "false")
+	indent_tree(osm_root)
 	osm_tree = ET.ElementTree(osm_root)
 	osm_tree.write(filename, encoding='utf-8', method='xml', xml_declaration=True)
 
@@ -1862,7 +1927,7 @@ if __name__ == '__main__':
 		json_output = True
 	if "-stream" in sys.argv or "-bekk" in sys.argv:
 		turn_stream = True
-	if "-ele" in sys.argv or u"høyde" in sys.argv:
+	if "-ele" in sys.argv or "høyde" in sys.argv:
 		lake_ele = True
 	if "-noname" in sys.argv:
 		no_name = True
@@ -1871,7 +1936,7 @@ if __name__ == '__main__':
 	if "-nonode" in sys.argv:
 		no_node = True
 
-	output_filename = "N50_" + data_category
+	output_filename = "n50_%s_%s_%s" % (municipality_id, municipality_name.replace(" ", "_"), data_category)
 
 	# Process data
 
