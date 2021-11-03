@@ -4,7 +4,7 @@
 
 import urllib.request, urllib.parse, urllib.error
 import zipfile
-from io import BytesIO
+from io import BytesIO, TextIOWrapper
 import json
 import csv
 import copy
@@ -15,7 +15,7 @@ from xml.etree import ElementTree as ET
 import utm
 
 
-version = "0.5.0"
+version = "0.6.0"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -163,7 +163,7 @@ def tag_object(feature_type, geometry_type, properties, feature):
 						
 			elif properties['bygningstype'] in building_tags:
 				for key, value in iter(building_tags[ properties['bygningstype'] ].items()):
-					if geometry_type == "område" or key != "building" or len(building_tags[ properties['bygningstype'] ]) > 1:
+					if geometry_type == "område" or key != "building":  # or len(building_tags[ properties['bygningstype'] ]) > 1:
 						tags[ key ] = value
 
 		if geometry_type != "posisjon" and "building" not in tags:
@@ -453,7 +453,7 @@ def parse_coordinates (coord_text):
 		if not coordinates or node != coordinates[-1] or json_output:
 			coordinates.append(node)
 		else:
-			message ("\t*** DELETED DUPLICATE NODE: %s %s\n" % (node, gml_id))
+#			message ("\t*** DELETED DUPLICATE NODE: %s %s\n" % (node, gml_id))
 			create_point(node, gml_id, "deleted duplicate")
 
 	# Remove single outlayer node
@@ -462,7 +462,7 @@ def parse_coordinates (coord_text):
 		i = 0
 		while i < len(coordinates):
 			if i > 1 and coordinates[i] == coordinates[i - 2]:
-				message ("\t*** DELETED ARTEFACT NODE: %s %s\n" % (coordinates[ i - 1 ], gml_id))
+#				message ("\t*** DELETED ARTEFACT NODE: %s %s\n" % (coordinates[ i - 1 ], gml_id))
 				create_point(copy.deepcopy(coordinates[ i - 1 ]), gml_id, "deleted artefact")
 				coordinates.pop(i)
 				coordinates.pop(i - 1)
@@ -471,16 +471,16 @@ def parse_coordinates (coord_text):
 				i += 1
 
 		if len(coordinates) > 2 and coordinates[0] == coordinates[-1] and coordinates[1] == coordinates[-2] :
-			message ("\t*** DELETED ARTEFACT NODE: %s %s\n" % (coordinates[ 0 ], gml_id))
+#			message ("\t*** DELETED ARTEFACT NODE: %s %s\n" % (coordinates[ 0 ], gml_id))
 			coordinates = coordinates[ 1: -1 ]
 
 	if len(coordinates) == 1 and parse_count > 1:
-		message ("\t*** DELETED TOO MUCH? %s\n" % gml_id)
+		message ("\t*** SHORT WAY %s\n" % gml_id)
 
 	return coordinates
 
 
-# Get name or id of minicipality from GeoNorge api
+# Get name or id of municipality from GeoNorge api
 
 def get_municipality_name (query):
 
@@ -524,14 +524,20 @@ def get_municipality_name (query):
 
 def load_building_types():
 
-	file = open("building_types.csv")
-	building_csv = csv.DictReader(file, fieldnames=["id", "name", "osm_tag"], delimiter=";")
+#	file = open("building_types.csv")
+	url = "https://raw.githubusercontent.com/NKAmapper/building2osm/main/building_types.csv"
+	request = urllib.request.Request(url, headers=header)
+	file = urllib.request.urlopen(request)
+
+	building_csv = csv.DictReader(TextIOWrapper(file, "utf-8"), fieldnames=["id", "name", "building_tag", "extra_tag"], delimiter=";")
 	next(building_csv)
 
 	for row in building_csv:
-		if row['osm_tag']:
+		tag_string = (row['building_tag'] + "+" + row['extra_tag']).strip().strip("+")
+
+		if tag_string:
 			osm_tag = {}
-			tag_list = row['osm_tag'].replace(" ","").split("+")
+			tag_list = tag_string.replace(" ","").split("+")
 
 			for tag_part in tag_list:
 				tag_split = tag_part.split("=")
@@ -562,7 +568,7 @@ def split_patch (coordinates):
 		if first < i:
 			result1 = split_patch( coordinates[ : first ] + coordinates[ i: ] )
 			result2 = split_patch( coordinates[ first : i + 1 ])
-			message ("\t*** SPLIT SELF-INTERSECTING/TOUCHING POLYGON: %s\n" % str(coordinates[i]))	
+#			message ("\t*** SPLIT SELF-INTERSECTING/TOUCHING POLYGON: %s\n" % str(coordinates[i]))	
 		
 			if simple_length(result1[0]) > simple_length(result2[0]):
 				result1.extend(result2)
@@ -759,7 +765,7 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 						entry['used'] = 0
 
 					segments.append(entry)
-				else:
+				elif not (entry['type'] == "Point" and not entry['tags']) or debug:  # Omit untagged single points
 					features.append(entry)
 			else:
 				message ("\t*** SEGMENT TOO SHORT: %s\n" % gml_id)
@@ -937,7 +943,7 @@ def split_polygons():
 					if matched_nodes < len(patch) - 1 and feature['object'] != "Havflate":
 						create_border_segments(patch, matching_segments, feature['gml_id'], matched_nodes)
 
-					# Sort relation members for petter presentation
+					# Sort relation members for better presentation
 					matching_segments.sort(key=lambda segment_index: segment_position(segment_index, patch))
 					matching_polygon.append(matching_segments)
 					split_count += len(matching_segments) - 1
@@ -1154,16 +1160,6 @@ def find_islands():
 
 	message ("\t%i islands\n" % island_count)
 	message ("\tRun time %s\n" % (timeformat(time.time() - lap)))
-
-
-# Check if lines 1 and 2 (features or segments) are intersecting and create common node
-# Requires that ElvBekk/stream will be line1 parameter
-# If stream is True, the intersecting node will be removed or slightly relocated instead of storing the common node
-
-def check_intersection(line1, line2, stream):
-
-	global delete_count
-
 
 
 
