@@ -1,9 +1,9 @@
 # n50osm
-Extracts N50 topo data from Kartverket and creates OSM file.
+Tools for extracting N50 topo data from Kartverket and for merging it with existing OSM data.
 
-### Usage ###
+### n50osm.py ###
 
-<code>python n50osm.py [municipality] [category] [-options]</code>
+Usage: <code>python3 n50osm.py \<municipality\> \<category\> [-options]</code>
 
 Paramters:
 * *municipality* - Name of municipality or 4 digit municipality number.
@@ -25,31 +25,47 @@ Paramters:
   * <code>-nonve</code> - Do not load lake information from NVE.
   * <code>-nonode</code> - Do not identify intersections between lines (time consuming for large municipalities).
 
-The *utm.py* and *building_types.csv* files should be located in the same folder as *n50osm.py* when running the program.
+The *utm.py* file should be located in the same folder as *n50osm.py* when running the program.
+
+### n50merge.py ###
+
+Merges N50 import file with existing OSM, when importing partitions of a municipality in stages. Also splits import file into smaller files.
+
+Usage: <code>python3 n50merge.py \<municipality\> [filename] [-split]</code>
+
+Paramters:
+* *municipality* - Name of municipality or 4 digit municipality number.
+* *filename* - N50 import file, or standard category from split (*coastline*, *water*, *wood* or *landuse*). If not given, the program will look for the filename produced by n50osm.py for the given municipality.
+* <code>-split</code> - Will split the N50 import file into 4 categories (*coastline*, *water*, *wood* or *landuse*). No merging.
 
 ### Notes ###
 
-* This program loads data from Kartverket N50, combines it with other data sources and produces an OSM file for import.
+* The *n50osm.py* program loads data from Kartverket N50, combines it with other data sources and produces an OSM file for import.
   * The N50 topology data is loaded from Kartverket. OSM relations are automatically created.
   * Lake data is loaded from NVE.
   * Elevation data is loaded from a Kartverket api (not from the elevation DEM or TIFF files).
   * Place names are loaded from the [SSR import files](https://wiki.openstreetmap.org/wiki/No:Import_av_stedsnavn_fra_SSR2) created by the OSM community.
   * Buildings are tagged according to the building type CSV file on GitHub.
-  * The program has an exponential complexity. Most municipalities will run in a few seconds, large municipalities will run in minutes (for example Vinje in 30 mins), while the largest municipalities might require several hours to complete. The elevation api is slow, currently running at 1 elevation per second (per stream and lake).
-* This program is a supplement to [topo2osm](https://github.com/osmno/topo2osm). The main differences are:
+  * The program has an exponential complexity. Most municipalities will run in a few seconds, large municipalities will run in minutes (for example Vinje in 30 mins), while the largest municipalities might require several hours to complete. The elevation api is slow, currently running at 3 elevations per second (per stream and lake).
+   * Only one file for the entire municipality is produced. Please split into suitable sections when importing, either manually, or using *n50merge.py* with the <code>-split</code> option.
+  * A few fixme tags are produced for streams which need manual inspection regarding downhill direction, as well as for place names whenever SSR contains more than one approved name for an object.
+* The *n50merge.py* program merges the N50 import file with existing OSM data which it loads from Overpass.
+  * Only identical ways and relations are combined, typically those produced by *n50osm.py*.
+  * Remaining ways must be combined manually in JOSM, including any parent relations. Validate and look for overlapping nodes or areas. Finally, upload to OSM.
+  * Wait approx. 5 minutes after uploading before running *n50merge.py* again, to allow OSM to update properly.
+* This is a supplement to [topo2osm](https://github.com/osmno/topo2osm). The main differences are:
   * All required input data are automatically loaded.
   * All features are stored in one file.
   * Islands are identified and tagged.
   * Lakes, islands, wetlands etc. will get names if they exist in SSR.
   * N50 categories other than "Arealdekke", such as peaks, quays, piers, dams and public services, are also processed.
   * A few enhancements, such as correct direction of coastline, removal of duplicate nodes and relations.
-* Notes for the import process:
-  * Only one file for the entire municipality is produced. Please split into suitable sections when importing.
-  * Add the *source=Kartverket* tag if you would like to run the merge script from [topo2osm](https://github.com/osmno/topo2osm).
-  * A few fixme tags are produced for streams which need manual inspection regarding downhill direction, as well as for place names whenever SSR contains more than one approved name for an object.
 
 ### Changelog
 
+n50osm.py
+* 0.6. Building=* tags only on polygons, not nodes.
+* 0.5: New API for elevations.
 * 0.4: Code converted to Python 3.
 
 ### References ###
