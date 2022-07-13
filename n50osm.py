@@ -15,7 +15,7 @@ from xml.etree import ElementTree as ET
 import utm
 
 
-version = "0.6.0"
+version = "0.7.0"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -115,6 +115,7 @@ osm_tags = {
 	'Taubane':				{ 'aerialway': 'cable_car' },  # Could be other aerial values, e.g. gondola, goods
 	'Tårn':					{ 'man_made': 'tower' },  # Any massive or substantial tower
 	'Vindkraftverk':		{ 'power': 'generator', 'generator:source': 'wind', 'generator:type': 'horizontal_axis' }
+
 }
 
 
@@ -147,7 +148,7 @@ def tag_object(feature_type, geometry_type, properties, feature):
 						tags['tourism'] = "alpine_hut"
 					elif properties['betjeningsgrad'] == "S":  # Selvbetjent
 						tags['tourism'] = "wilderness_hut"
-					elif properties['betjeningsgrad'] == ["U", "D", "R"]:  # Ubetjent, dagstur, rastebu
+					elif properties['betjeningsgrad'] in ["U", "D", "R"]:  # Ubetjent, dagstur, rastebu
 						tags['amenity'] = "shelter"
 						tags['shelter_type'] = "basic_hut"
 					else:
@@ -218,6 +219,8 @@ def tag_object(feature_type, geometry_type, properties, feature):
 		tags['name'] = properties['fulltekst']
 	if "stedsnummer" in properties:
 		tags['ssr:stedsnr'] = properties['stedsnummer']
+#	if "skriftkode" in properties:
+#		tags['SKRIFTKODE'] = properties['skriftkode']
 
 	if "merking" in properties and properties['merking'] == "JA":
 		tags['trailblazed'] = "yes"
@@ -588,7 +591,8 @@ def get_property(top,  ns_app):
 	if ns_app in top.tag:
 		tag = top.tag[ len(ns_app)+2 : ]
 		value = top.text
-		if value.strip():
+		value = value.strip()
+		if value:
 			properties[tag] = value
 
 	for child in top:
@@ -635,7 +639,7 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 	root = tree.getroot()
 
 	ns_gml = 'http://www.opengis.net/gml/3.2'
-	ns_app = 'http://skjema.geonorge.no/sosi/produktspesifikasjon/N50/20170401/'
+	ns_app = 'http://skjema.geonorge.no/SOSI/produktspesifikasjon/N50/20170401'
 
 	ns = {
 		'gml': ns_gml,
@@ -1597,7 +1601,7 @@ def get_place_names():
 	get_category_place_names(["SnøIsbre"], ["isbre", "fonn", "iskuppel"])
 
 	# Get wetland names
-	get_category_place_names(["Myr"], ["myr"])
+	get_category_place_names(["Myr"], ["myr", "våtmarksområde"])
 
 	# Get cemetery names
 	get_category_place_names(["Gravplass"], ["gravplass"])
@@ -1638,9 +1642,14 @@ def get_nve_lakes():
 #				"searchText=%s&contains=true&searchFields=kommNr&layers=5&returnGeometry=false&returnUnformattedValues=true&f=pjson&resultOffset=%i&resultRecordCount=1000&orderByFields=areal_km2%20DESC" \
 #				% (municipality_id, nve_lake_count)
 
-		url = "https://gis3.nve.no/map/rest/services/Innsjodatabase2/MapServer/5/query?" + \
+#		url = "https://gis3.nve.no/map/rest/services/Innsjodatabase2/MapServer/5/query?" + \
+#				"where=kommNr%%3D%%27%s%%27&outFields=vatnLnr%%2Cnavn%%2Choyde%%2Careal_km2%%2CmagasinNr&returnGeometry=false&resultOffset=%i&resultRecordCount=1000&f=json" \
+#					% (municipality_id, nve_lake_count)
+
+		url = "https://nve.geodataonline.no/arcgis/rest/services/Innsjodatabase2/MapServer/5/query?" + \
 				"where=kommNr%%3D%%27%s%%27&outFields=vatnLnr%%2Cnavn%%2Choyde%%2Careal_km2%%2CmagasinNr&returnGeometry=false&resultOffset=%i&resultRecordCount=1000&f=json" \
 					% (municipality_id, nve_lake_count)
+
 
 		request = urllib.request.Request(url, headers=header)
 		file = urllib.request.urlopen(request)
@@ -1890,7 +1899,7 @@ if __name__ == '__main__':
 	if len(sys.argv) < 3:
 		message ("Please provide 1) municipality, and 2) data category parameter.\n")
 		message ("Data categories: %s\n" % ", ".join(data_categories))
-		message ("Options: -debug, -tag, -geojson, -stream, -ssr, -noname, -nonve, -nonode\n\n")
+		message ("Options: -debug, -tag, -geojson, -stream, -noname, -nonve, -nonode\n\n")
 		sys.exit()
 
 	# Get municipality
@@ -1931,6 +1940,9 @@ if __name__ == '__main__':
 		no_nve = True
 	if "-nonode" in sys.argv:
 		no_node = True
+
+	if not turn_stream or not lake_ele:
+		message ("*** Remember -stream and -ele options before importing.\n")
 
 	output_filename = "n50_%s_%s_%s" % (municipality_id, municipality_name.replace(" ", "_"), data_category)
 
