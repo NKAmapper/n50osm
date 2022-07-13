@@ -15,7 +15,7 @@ from xml.etree import ElementTree as ET
 import utm
 
 
-version = "0.7.0"
+version = "0.7.1"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -1011,8 +1011,8 @@ def find_islands():
 				else:
 					island_type = "islet"
 
-				if area < 0:
-					message ("\t*** ISLAND WITH REVERSE COASTLINE: %s\n" % feature['gml_id'])
+#				if area < 0:
+#					message ("\t*** ISLAND WITH REVERSE COASTLINE: %s\n" % feature['gml_id'])
 
 				# Tag closed way if possible
 
@@ -1448,7 +1448,7 @@ def get_ssr_name (feature, name_categories):
 				place['tags']['ssr:type'] in name_categories and place['tags']['name'] not in names and \
 				(feature['type'] == "Point" or inside_polygon(place['coordinate'], polygon)):
 			found_names.append(place)
-			names.append(place['tags']['name'])
+			names.extend(place['tags']['name'].replace(" - ", ";").split(";"))  # Split multiple languages + variants
 
 	# Sort and select name
 
@@ -1462,11 +1462,30 @@ def get_ssr_name (feature, name_categories):
 			if not sea or "Sjø" in place['tags']['ssr:type']:
 				alt_names.append("%s [%s %s]" % (place['tags']['name'], place['tags']['ssr:type'], place['tags']['ssr:stedsnr']))
 
-		if len(alt_names) == 1 and \
-				not ("name" in feature['tags'] and feature['tags']['name'] != found_names[0]['tags']['name']) or \
+		# Name already suggested by NVE data, so get ssr:stedsnr and any alternative names
+		if "name" in feature['tags'] and feature['tags']['name'] in names:
+			name = feature['tags']['name']
+			for place in found_names:
+				if name in place['tags']['name'].replace(" - ", ";").split(";"):
+					feature['tags'].update(place['tags'])
+					feature['tags']['name'] = name  # Add back NVE name
+					feature['extras']['ssr:type'] = feature['tags'].pop("ssr:type", None)
+					if len(alt_names) > 1:
+						if name != place['tags']['name']:
+							alt_names.insert(0, "%s [NVE]" % name)
+						feature['tags']['fixme'] = "Alternative names: " + ", ".join(alt_names)
+					name_count += 1
+					break
+
+		# Only one name found, or only one name of preferred type
+		elif len(alt_names) == 1 or \
 				"øyISjø" in found_names[0]['tags']['ssr:type'] and "øyISjø" not in found_names[1]['tags']['ssr:type'] or \
 				"øy" in found_names[0]['tags']['ssr:type'] and "øy" not in found_names[1]['tags']['ssr:type'] or \
 				"holme" in found_names[0]['tags']['ssr:type'] and "holme" not in found_names[1]['tags']['ssr:type']:
+
+			if "name" in feature['tags'] and (len(alt_names) > 1 or \
+					feature['tags']['name'] not in found_names[0]['tags']['name'].replace(" - ", ";").split(";")):
+				alt_names.insert(0, "%s [NVE]" % feature['tags']['name'])
 
 			feature['tags'].update(found_names[0]['tags'])
 			feature['extras']['ssr:type'] = feature['tags'].pop("ssr:type", None)
