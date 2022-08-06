@@ -15,7 +15,7 @@ from xml.etree import ElementTree as ET
 import utm
 
 
-version = "0.7.1"
+version = "0.7.2"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -1918,7 +1918,7 @@ if __name__ == '__main__':
 	if len(sys.argv) < 3:
 		message ("Please provide 1) municipality, and 2) data category parameter.\n")
 		message ("Data categories: %s\n" % ", ".join(data_categories))
-		message ("Options: -debug, -tag, -geojson, -stream, -noname, -nonve, -nonode\n\n")
+		message ("Options: -debug, -tag, -geojson, -stream, -ele, -noname, -nonve, -nonode\n\n")
 		sys.exit()
 
 	# Get municipality
@@ -1951,7 +1951,7 @@ if __name__ == '__main__':
 		json_output = True
 	if "-stream" in sys.argv or "-bekk" in sys.argv:
 		turn_stream = True
-	if "-ele" in sys.argv or "høyde" in sys.argv:
+	if "-ele" in sys.argv or "-høyde" in sys.argv:
 		lake_ele = True
 	if "-noname" in sys.argv:
 		no_name = True
