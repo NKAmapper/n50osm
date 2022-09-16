@@ -17,7 +17,9 @@ header = {"User-Agent": "nkamapper/n50osm"}
 
 overpass_api = "https://overpass-api.de/api/interpreter"  # Overpass endpoint
 
-import_folder = "~/Jottacloud/osm/n50/"  # Folder containing import highway files (default folder tried first)
+import_folder = (  # Folder containing import highway files (default folder tried first)
+    "~/Jottacloud/osm/n50/"
+)
 
 n50_parts = ["coastline", "water", "wood", "landuse"]
 
@@ -31,7 +33,6 @@ debug = False
 
 
 def message(text):
-
     sys.stderr.write(text)
     sys.stderr.flush()
 
@@ -40,7 +41,6 @@ def message(text):
 
 
 def timeformat(sec):
-
     if sec > 3600:
         return "%i:%02i:%02i hours" % (sec / 3600, (sec % 3600) / 60, sec % 60)
     elif sec > 60:
@@ -53,7 +53,6 @@ def timeformat(sec):
 
 
 def get_municipality_name(query):
-
     if query.isdigit():
         url = "https://ws.geonorge.no/kommuneinfo/v1/kommuner/" + query
     else:
@@ -102,7 +101,6 @@ def get_municipality_name(query):
 
 
 def prepare_data(root, tree, nodes, ways, relations):
-
     # Create dict of nodes
     # Each node is a tuple of (lon, lat), corresponding to GeoJSON format x,y
 
@@ -179,7 +177,6 @@ def prepare_data(root, tree, nodes, ways, relations):
 
 
 def load_osm():
-
     global osm_root, osm_tree
 
     message("Load existing OSM elements from Overpass ...\n")
@@ -187,7 +184,8 @@ def load_osm():
     query = (
         "[timeout:90];(area[ref=%s][admin_level=7][place=municipality];)->.a;"
         % municipality_id
-        + '( nwr["natural"](area.a); nwr["waterway"](area.a); nwr["landuse"](area.a); nwr["leisure"](area.a);'
+        + '( nwr["natural"](area.a); nwr["waterway"](area.a); nwr["landuse"](area.a);'
+        ' nwr["leisure"](area.a);'
         + 'nwr["aeroway"](area.a); nwr["seamark:type"="rock"](area.a); );'
         + "(._;>;<;);out meta;"
     )
@@ -230,7 +228,6 @@ def load_osm():
 
 
 def load_n50():
-
     global n50_root, n50_tree
 
     message("Load N50 import file elements ...\n")
@@ -260,9 +257,7 @@ def load_n50():
 
 
 def filter_parts(part, n50_elements, found_elements):
-
     for element_id, element in iter(n50_elements.items()):
-
         all_tags = element["xml"].findall("tag")
         if all_tags != None:
             for tag in all_tags:
@@ -295,7 +290,6 @@ def filter_parts(part, n50_elements, found_elements):
 
 
 def split_n50():
-
     message("Splitting N50 import file ...\n")
 
     for part in n50_parts:
@@ -325,7 +319,6 @@ def split_n50():
         if part in ["coastline", "water"]:
             for relation_id, relation in iter(n50_relations.items()):
                 if relation["island"]:
-
                     for member in relation["members"]:
                         if member in ways:
                             relations.add(relation_id)
@@ -372,7 +365,6 @@ def split_n50():
 
 
 def merge_osm():
-
     message("Merge OSM ways ...\n")
 
     count = 0
@@ -406,7 +398,6 @@ def merge_osm():
 
 
 def merge_tags(n50_xml, osm_xml):
-
     n50_tags = {}
     for tag in n50_xml.findall("tag"):
         n50_tags[tag.attrib["k"]] = tag.attrib["v"]
@@ -434,7 +425,6 @@ def merge_tags(n50_xml, osm_xml):
 
 
 def merge_n50():
-
     message("Merge N50 with OSM ...\n")
 
     lap_time = time.time()
@@ -455,11 +445,9 @@ def merge_n50():
                 and not n50_way["incomplete"]
                 and not osm_way["incomplete"]
             ):
-
                 # Check if conflicting tags, for example natural=water + natural=wood. Also update OSM tags.
 
                 if merge_tags(n50_way["xml"], osm_way["xml"]):
-
                     # Swap ref if member in relations
 
                     for parent_id in n50_way["parents"]:
@@ -574,7 +562,6 @@ def indent_tree(elem, level=0):
 
 
 def save_osm():
-
     message("Saving file ...\n")
 
     # Merge remaining N50 tree into OSM tree
@@ -596,7 +583,6 @@ def save_osm():
 # Main program
 
 if __name__ == "__main__":
-
     start_time = time.time()
     message("\nn50merge v%s\n\n" % version)
 

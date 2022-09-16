@@ -146,7 +146,6 @@ osm_tags = {
 
 
 def tag_object(feature_type, geometry_type, properties, feature):
-
     tags = {}
     missing_tags = set()
 
@@ -276,7 +275,6 @@ def tag_object(feature_type, geometry_type, properties, feature):
 
 
 def message(output_text):
-
     sys.stdout.write(output_text)
     sys.stdout.flush()
 
@@ -285,7 +283,6 @@ def message(output_text):
 
 
 def timeformat(sec):
-
     if sec > 3600:
         return "%i:%02i:%02i hours" % (sec / 3600, (sec % 3600) / 60, sec % 60)
     elif sec > 60:
@@ -302,7 +299,6 @@ def timeformat(sec):
 
 
 def polygon_area(polygon):
-
     if polygon[0] == polygon[-1]:
         lat_dist = math.pi * 6371009.0 / 180.0
 
@@ -327,14 +323,12 @@ def polygon_area(polygon):
 
 
 def multipolygon_area(multipolygon):
-
     if (
         type(multipolygon) is list
         and len(multipolygon) > 0
         and type(multipolygon[0]) is list
         and multipolygon[0][0] == multipolygon[0][-1]
     ):
-
         area = polygon_area(multipolygon[0])
         for patch in multipolygon[1:]:
             inner_area = polygon_area(patch)
@@ -353,7 +347,6 @@ def multipolygon_area(multipolygon):
 
 
 def polygon_centroid(polygon):
-
     if polygon[0] == polygon[-1]:
         x = 0
         y = 0
@@ -376,7 +369,6 @@ def polygon_centroid(polygon):
 
 
 def inside_polygon(point, polygon):
-
     if polygon[0] == polygon[-1]:
         x, y = point
         n = len(polygon)
@@ -404,14 +396,12 @@ def inside_polygon(point, polygon):
 
 
 def inside_multipolygon(point, multipolygon):
-
     if (
         type(multipolygon) is list
         and len(multipolygon) > 0
         and type(multipolygon[0]) is list
         and multipolygon[0][0] == multipolygon[0][-1]
     ):
-
         inside = inside_polygon(point, multipolygon[0])
         if inside:
             for patch in multipolygon[1:]:
@@ -430,7 +420,6 @@ def inside_multipolygon(point, multipolygon):
 
 
 def coordinate_offset(node, distance):
-
     m = 1 / ((math.pi / 180.0) * 6378137.0)  # Degrees per meter
 
     latitude = node[1] + (distance * m)
@@ -444,7 +433,6 @@ def coordinate_offset(node, distance):
 
 
 def get_bbox(coordinates, perimeter):
-
     if type(coordinates) is tuple:
         patch = [coordinates]
     elif type(coordinates[0]) is tuple:
@@ -471,7 +459,6 @@ def get_bbox(coordinates, perimeter):
 
 
 def create_point(node, gml_id, note):
-
     if debug:
         entry = {
             "object": "Debug",
@@ -492,7 +479,6 @@ def create_point(node, gml_id, note):
 
 
 def parse_coordinates(coord_text):
-
     global gml_id
 
     parse_count = 0
@@ -544,7 +530,6 @@ def parse_coordinates(coord_text):
 
 
 def get_municipality_name(query):
-
     if query.isdigit():
         url = "https://ws.geonorge.no/kommuneinfo/v1/kommuner/" + query
     else:
@@ -593,7 +578,6 @@ def get_municipality_name(query):
 
 
 def load_building_types():
-
     # 	file = open("building_types.csv")
     url = "https://raw.githubusercontent.com/NKAmapper/building2osm/main/building_types.csv"
     request = urllib.request.Request(url, headers=header)
@@ -626,7 +610,6 @@ def load_building_types():
 
 
 def simple_length(coord):
-
     length = 0
     for i in range(len(coord) - 2):
         length += (coord[i + 1][0] - coord[i][0]) ** 2 + (
@@ -640,7 +623,6 @@ def simple_length(coord):
 
 
 def split_patch(coordinates):
-
     for i in range(1, len(coordinates) - 1):
         first = coordinates.index(coordinates[i])
         if first < i:
@@ -662,7 +644,6 @@ def split_patch(coordinates):
 
 
 def get_property(top, ns_app):
-
     properties = {}
     if ns_app in top.tag:
         tag = top.tag[len(ns_app) + 2 :]
@@ -681,7 +662,6 @@ def get_property(top, ns_app):
 
 
 def load_n50_data(municipality_id, municipality_name, data_category):
-
     global gml_id
 
     lap = time.time()
@@ -765,7 +745,6 @@ def load_n50_data(municipality_id, municipality_name, data_category):
             properties = {}  # Attributes provided from GML
 
             for app in feature[0]:
-
                 # Get app properties/attributes
 
                 tag = app.tag[len(ns_app) + 2 :]
@@ -913,7 +892,7 @@ def load_n50_data(municipality_id, municipality_name, data_category):
             message("\t\t%i\t%s\n" % (object_count[object_type], object_type))
 
     if missing_tags:
-        message("\tNot tagged: %s\n" % (", ".join(missing_tags.difference("Havflate"))))
+        message("\tNot tagged: %s\n" % ", ".join(missing_tags.difference("Havflate")))
     if stream_count > 0:
         message("\t%i streams\n" % stream_count)
 
@@ -927,7 +906,6 @@ def load_n50_data(municipality_id, municipality_name, data_category):
 
 
 def create_border_segments(patch, members, gml_id, match):
-
     # First create list of existing conncetions between coordinates i and i+1 of patch
 
     connection = []
@@ -956,7 +934,6 @@ def create_border_segments(patch, members, gml_id, match):
 
     start_index = 0
     while start_index < len(patch) - 2:
-
         while start_index < len(patch) - 1 and connection[start_index]:
             start_index += 1
 
@@ -985,7 +962,6 @@ def create_border_segments(patch, members, gml_id, match):
 
 
 def segment_position(segment_index, patch):
-
     return patch.index(segments[segment_index]["coordinates"][1])
 
 
@@ -997,7 +973,6 @@ def segment_position(segment_index, patch):
 
 
 def split_polygons():
-
     message("Decompose polygons into segments...\n")
 
     # Create bbox for segments and line features
@@ -1011,7 +986,6 @@ def split_polygons():
     split_count = 0
 
     for feature in features:
-
         if feature["type"] == "Polygon":
             matching_polygon = []
 
@@ -1025,7 +999,6 @@ def split_polygons():
                 [patch_min_bbox, patch_max_bbox] = get_bbox(patch, 0)
 
                 for i, segment in enumerate(segments):
-
                     if (
                         patch_min_bbox[0] <= segment["max_bbox"][0]
                         and patch_max_bbox[0] >= segment["min_bbox"][0]
@@ -1033,7 +1006,6 @@ def split_polygons():
                         and patch_max_bbox[1] >= segment["min_bbox"][1]
                         and set(segment["coordinates"]) <= patch_set
                     ):
-
                         # Note: If patch is a closed way, segment may wrap start/end of patch
 
                         if len(segment["coordinates"]) == 2:
@@ -1070,7 +1042,6 @@ def split_polygons():
                                 "KantUtsnitt",
                             ]
                         ):
-
                             segment["used"] += 1
                             node1 = patch.index(segment["coordinates"][0])
                             node2 = patch.index(segment["coordinates"][1])
@@ -1120,7 +1091,6 @@ def split_polygons():
 
 
 def find_islands():
-
     message("Find islands...\n")
 
     lap = time.time()
@@ -1168,7 +1138,6 @@ def find_islands():
             "FerskvannTørrfall",
         ]:
             for i in range(1, len(feature["members"])):
-
                 # Do not use patch with intermittent edge
 
                 found = True
@@ -1300,7 +1269,6 @@ def find_islands():
         # Add island to features list if closed chain of ways
 
         if first_node == last_node:
-
             members = []
             coordinates = [first_node]
             for segment in island:
@@ -1362,7 +1330,6 @@ def find_islands():
 
 
 def match_nodes():
-
     global delete_count
 
     message("Identify intersections...\n")
@@ -1384,7 +1351,6 @@ def match_nodes():
             nodes.add(feature["coordinates"][-1])
 
     if not no_node:
-
         # Create bbox for segments and line features + create temporary list of LineString features
 
         for segment in segments:
@@ -1407,7 +1373,6 @@ def match_nodes():
                         and feature["min_bbox"][1] <= segment["max_bbox"][1]
                         and feature["max_bbox"][1] >= segment["min_bbox"][1]
                     ):
-
                         intersections = set(feature["coordinates"]).intersection(
                             set(segment["coordinates"])
                         )
@@ -1488,7 +1453,6 @@ def match_nodes():
 
 
 def get_elevation_old(node):
-
     global elevations, ele_count, retry_count
 
     ns_ows = "http://www.opengis.net/ows/1.1"
@@ -1562,7 +1526,6 @@ def get_elevation_old(node):
 
 
 def get_elevation(node):
-
     global elevations, ele_count, retry_count
 
     url = (
@@ -1598,7 +1561,6 @@ def get_elevation(node):
 
 
 def fix_stream_direction():
-
     global elevations, ele_count, retry_count
 
     elevations = {}  # Already fetched elevations from api
@@ -1668,7 +1630,6 @@ def fix_stream_direction():
 
 
 def get_ssr_name(feature, name_categories):
-
     global ssr_places, name_count
 
     if feature["type"] == "Point":
@@ -1707,7 +1668,6 @@ def get_ssr_name(feature, name_categories):
     # Sort and select name
 
     if found_names:
-
         found_names.sort(
             key=lambda name: name_categories.index(name["tags"]["ssr:type"])
         )  # place_name_rank(name, name_categories))
@@ -1754,7 +1714,6 @@ def get_ssr_name(feature, name_categories):
             or "holme" in found_names[0]["tags"]["ssr:type"]
             and "holme" not in found_names[1]["tags"]["ssr:type"]
         ):
-
             if "name" in feature["tags"] and (
                 len(alt_names) > 1
                 or feature["tags"]["name"]
@@ -1781,7 +1740,6 @@ def get_ssr_name(feature, name_categories):
 
 
 def get_category_place_names(n50_categories, ssr_categories):
-
     for feature in features:
         if feature["object"] in n50_categories:
             get_ssr_name(feature, ssr_categories)
@@ -1792,7 +1750,6 @@ def get_category_place_names(n50_categories, ssr_categories):
 
 
 def get_place_names():
-
     global ssr_places, name_count
     global elevations, ele_count, retry_count
 
@@ -1828,9 +1785,10 @@ def get_place_names():
             if "name" in tag.get("k") or tag.get("k") in ["ssr:stedsnr", "ssr:type"]:
                 if tag.get("k") == "fixme":
                     if "multiple name" in tag.get("v"):
-                        entry["tags"][
-                            "fixme"
-                        ] = "Multiple name tags, please choose one and add the other to alt_name"
+                        entry["tags"]["fixme"] = (
+                            "Multiple name tags, please choose one and add the other to"
+                            " alt_name"
+                        )
                 else:
                     entry["tags"][tag.get("k")] = tag.get("v")
 
@@ -1878,7 +1836,6 @@ def get_place_names():
 
     for feature in features:
         if feature["object"] in ["Innsjø", "InnsjøRegulert"]:
-
             lake_node = get_ssr_name(feature, name_category)
             area = abs(multipolygon_area(feature["coordinates"]))
             feature["extras"]["areal"] = str(int(area))
@@ -1890,7 +1847,6 @@ def get_place_names():
                 and "ele" not in feature["tags"]
                 and (lake_node or area >= lake_ele_size)
             ):
-
                 # Check that name coordinate is not on lake's island
                 if lake_node:
                     if not inside_multipolygon(lake_node, feature["coordinates"]):
@@ -1953,7 +1909,6 @@ def get_place_names():
 
 
 def get_nve_lakes():
-
     message("Load lake data from NVE...\n")
 
     n50_lake_count = 0
@@ -1964,7 +1919,6 @@ def get_nve_lakes():
     # Paging results (default 1000 lakes)
 
     while more_lakes:
-
         # 		Alternative url:
         # 		url = "https://gis3.nve.no/map/rest/services/Innsjodatabase2/MapServer/find?" + \
         # 				"searchText=%s&contains=true&searchFields=kommNr&layers=5&returnGeometry=false&returnUnformattedValues=true&f=pjson&resultOffset=%i&resultRecordCount=1000&orderByFields=areal_km2%20DESC" \
@@ -2031,7 +1985,6 @@ def get_nve_lakes():
 
 
 def save_geojson(filename):
-
     message("Save to '%s' file...\n" % filename)
 
     json_features = {"type": "FeatureCollection", "features": []}
@@ -2083,7 +2036,6 @@ def indent_tree(elem, level=0):
 
 
 def save_osm(filename):
-
     message("Save to '%s' file...\n" % filename)
 
     osm_node_ids = {}  # Will contain osm_id of each common node
@@ -2147,7 +2099,6 @@ def save_osm(filename):
     # The main objects
 
     for feature in features:
-
         if feature["object"] == "Havflate":
             continue
 
@@ -2187,7 +2138,6 @@ def save_osm(filename):
                 osm_feature.append(osm_nd)
 
         elif feature["type"] == "Polygon":
-
             # Output way if possible to avoid relation
             if (
                 len(feature["members"]) == 1
@@ -2246,7 +2196,6 @@ def save_osm(filename):
 # Main program
 
 if __name__ == "__main__":
-
     start_time = time.time()
     message("\n-- n50osm v%s --\n" % version)
 
@@ -2273,7 +2222,8 @@ if __name__ == "__main__":
         message("Please provide 1) municipality, and 2) data category parameter.\n")
         message("Data categories: %s\n" % ", ".join(data_categories))
         message(
-            "Options: -debug, -tag, -geojson, -stream, -ele, -noname, -nonve, -nonode\n\n"
+            "Options: -debug, -tag, -geojson, -stream, -ele, -noname, -nonve,"
+            " -nonode\n\n"
         )
         sys.exit()
 
