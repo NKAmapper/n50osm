@@ -64,6 +64,8 @@ Paramters:
 ### Changelog
 
 n50osm.py
+* 0.8: Alternative SSR source; update riverbank tagging; fix island identification; various improvements
+* 0.7: Update API URLs; fix conflicting lake names SSR vs. NVE  
 * 0.6. Building=* tags only on polygons, not nodes.
 * 0.5: New API for elevations.
 * 0.4: Code converted to Python 3.
