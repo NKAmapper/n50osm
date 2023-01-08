@@ -9,15 +9,18 @@ import json
 import csv
 import copy
 import sys
+import os
 import time
 import math
 from xml.etree import ElementTree as ET
 import utm
 
 
-version = "0.7.2"
+version = "0.8.0"
 
 header = {"User-Agent": "nkamapper/n50osm"}
+
+ssr_folder = "~/Jottacloud/osm/stedsnavn/"  # Folder containing import SSR files (default folder tried first)
 
 coordinate_decimals = 7
 
@@ -34,7 +37,7 @@ avoid_objects = [  # Object types to exclude from output
 	'PresentasjonTekst'  # Stedsnavn
 ]
 
-auxiliary_objects = ['Arealbrukgrense', 'Dataavgrensning', 'FiktivDelelinje', \
+auxiliary_objects = ['Arealbrukgrense', 'Dataavgrensning', 'FiktivDelelinje',
 					'InnsjøElvSperre', 'InnsjøInnsjøSperre', 'ElvBekkKant', 'Havflate', 'Innsjøkant', 'InnsjøkantRegulert', 'FerskvannTørrfallkant']
 
 avoid_tags = [  # N50 properties to exclude from output (unless debug)
@@ -46,11 +49,11 @@ avoid_tags = [  # N50 properties to exclude from output (unless debug)
 osm_tags = {
 	# Arealdekke
 
-	'Alpinbakke':			{ 'landuse': 'winter_sports', 'piste:type': 'downhill', 'area': 'yes' },
+	'Alpinbakke':			{ 'landuse': 'winter_sports', 'piste:type': 'downhill' },  # Later also area=yes for closed ways
 	'BymessigBebyggelse':	{ 'landuse': 'retail' },  #'landuse': 'residential', 'residential': 'urban' },
 	'DyrketMark':			{ 'landuse': 'farmland' },
-	'ElvBekk':				{ 'waterway': 'stream' },
-	'FerskvannTørrfall':	{ 'waterway': 'riverbank', 'intermittent': 'yes' },
+	'ElvBekk':				{ 'waterway': 'stream' },  # Retagged later if river or area
+	'FerskvannTørrfall':	{ 'natural': 'water', 'water': 'river', 'intermittent': 'yes' },
 	'Foss':					{ 'waterway': 'waterfall' },
 	'Golfbane':				{ 'leisure': 'golf_course' },
 	'Gravplass':			{ 'landuse': 'cemetery' },
@@ -131,7 +134,8 @@ def tag_object(feature_type, geometry_type, properties, feature):
 
 	if feature_type == "ElvBekk":
 		if geometry_type == "område":
-			tags['waterway'] = "riverbank"
+			tags['natural'] = "water"
+			tags['water'] = "river"
 		elif "vannBredde" in properties and properties['vannBredde'] > "2":  # >3 meter
 			tags['waterway'] = "river"
 		else:
@@ -219,8 +223,6 @@ def tag_object(feature_type, geometry_type, properties, feature):
 		tags['name'] = properties['fulltekst']
 	if "stedsnummer" in properties:
 		tags['ssr:stedsnr'] = properties['stedsnummer']
-#	if "skriftkode" in properties:
-#		tags['SKRIFTKODE'] = properties['skriftkode']
 
 	if "merking" in properties and properties['merking'] == "JA":
 		tags['trailblazed'] = "yes"
@@ -477,8 +479,8 @@ def parse_coordinates (coord_text):
 #			message ("\t*** DELETED ARTEFACT NODE: %s %s\n" % (coordinates[ 0 ], gml_id))
 			coordinates = coordinates[ 1: -1 ]
 
-	if len(coordinates) == 1 and parse_count > 1:
-		message ("\t*** SHORT WAY %s\n" % gml_id)
+#	if len(coordinates) == 1 and parse_count > 1:
+#		message ("\t*** SHORT WAY %s\n" % gml_id)
 
 	return coordinates
 
@@ -527,7 +529,6 @@ def get_municipality_name (query):
 
 def load_building_types():
 
-#	file = open("building_types.csv")
 	url = "https://raw.githubusercontent.com/NKAmapper/building2osm/main/building_types.csv"
 	request = urllib.request.Request(url, headers=header)
 	file = urllib.request.urlopen(request)
@@ -725,8 +726,11 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 						for patch in geo[0][0]:
 							role = patch.tag[ len(ns_gml)+2 : ]
 
-							if patch[0].tag[ len(ns_gml)+2 : ] == "Ring":
-								coordinates = parse_coordinates(patch[0][0][0][0][0][0].text)  # Ring->Curve->LineStringSegment
+							if patch[0].tag == "{%s}Ring" % ns_gml:
+								if patch[0][0][0].tag == "{%s}LineString" % ns_gml:
+									coordinates = parse_coordinates(patch[0][0][0][0].text)  # Ring->LineString
+								else:
+									coordinates = parse_coordinates(patch[0][0][0][0][0][0].text)  # Ring->Curve->LineStringSegment
 							else:
 								coordinates = parse_coordinates(patch[0][0].text)  # LinearRing
 
@@ -771,8 +775,8 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 					segments.append(entry)
 				elif not (entry['type'] == "Point" and not entry['tags']) or debug:  # Omit untagged single points
 					features.append(entry)
-			else:
-				message ("\t*** SEGMENT TOO SHORT: %s\n" % gml_id)
+#			else:
+#				message ("\t*** SEGMENT TOO SHORT: %s\n" % gml_id)
 
 			# Update min/max dates for information
 
@@ -955,7 +959,12 @@ def split_polygons():
 					message ("\t*** NO MATCH: %s\n" % (feature['gml_id']))
 					feature['extras']['segmentering'] = "no"
 
-			feature['members'] = matching_polygon
+			if matching_polygon:
+				feature['members'] = matching_polygon
+			else:
+				# Backup output
+				feature['type'] = "LineString"
+				feature['coordinates'] = feature['coordinates'][0]
 
 	message ("\t%i splits\n" % split_count)
 	message ("\tRun time %s\n" % (timeformat(time.time() - lap)))
@@ -1011,15 +1020,17 @@ def find_islands():
 				else:
 					island_type = "islet"
 
-#				if area < 0:
+#				if area > 0:
 #					message ("\t*** ISLAND WITH REVERSE COASTLINE: %s\n" % feature['gml_id'])
 
 				# Tag closed way if possible
 
 				if len(feature['members'][i]) == 1:
 					segment = segments[ feature['members'][i][0] ]
-					segment['tags']['place'] = island_type
-					segment['extras']['areal'] = str(int(abs(area)))
+					# Avoid water type islands
+					if not("natural" in segment['tags'] and segment['tags']['natural'] == "wetland") and "intermittent" not in segment['tags']:
+						segment['tags']['place'] = island_type
+						segment['extras']['areal'] = str(int(abs(area)))
 
 				else:
 					# Serach for already existing relation
@@ -1054,10 +1065,6 @@ def find_islands():
 	# First build unordered list of segment coastline
 
 	coastlines = []
-#	for i, segment in enumerate(segments):
-#		if segment['object'] in ["Kystkontur", "Innsjøkant", "InnsjøkantRegulert", "ElvBekkKant"] and i not in used_segments:
-#			coastlines.append(segment)
-
 	for feature in features:
 		if feature['object'] in ["Havflate", "Innsjø", "InnsjøRegulert", "ElvBekk", "FerskvannTørrfall"] and \
 				len(feature['members']) > 0:
@@ -1093,20 +1100,6 @@ def find_islands():
 					found = True
 					break
 
-		# Build coastline/island backward
-		'''
-		found = True
-		while found and first_node != last_node:
-			found = False
-			for segment in coastlines[:]:
-				if segment['coordinates'][-1] == first_node:
-					first_node = segment['coordinates'][0]
-					island.insert(0, segment)
-					coastlines.remove(segment)
-					found = True				
-					break
-		'''
-
 		# Add island to features list if closed chain of ways
 
 		if first_node == last_node:
@@ -1118,8 +1111,8 @@ def find_islands():
 				coordinates += segment['coordinates'][1:]	
 
 			area = polygon_area(coordinates)
-			if area < 0:
-				continue
+			if area > 0:
+				continue  # Avoid lakes
 
 			if abs(area) > island_size:
 				island_type = "island"
@@ -1252,103 +1245,23 @@ def match_nodes():
 	message ("\tRun time %s\n" % (timeformat(time.time() - lap)))
 
 
-# OLD:
+
 # Get elevation for a given node/coordinate
-# API reference: https://kartverket.no/api-og-data/friluftsliv/hoydeprofil
-# 	and: https://wms.geonorge.no/skwms1/wps.elevation2?request=DescribeProcess&service=WPS&version=1.0.0&identifier=elevation
-# Note: Slow api (approx 1.4 calls/second), to be replaced by Kartverket end of 2020
-
-def get_elevation_old(node):
-
-	global elevations, ele_count, retry_count
-
-	ns_ows="http://www.opengis.net/ows/1.1"
-	ns_wps="http://www.opengis.net/wps/1.0.0"
-
-	ns = {
-		'ns0': ns_wps,
-		'ns2': ns_ows
-	}
-
-	url = "https://wms.geonorge.no/skwms1/wps.elevation2?request=Execute&service=WPS&version=1.0.0&identifier=elevation" + \
-			"&datainputs=lat=%f;lon=%f;epsg=4326" % (node[1], node[0])
-
-	if node in elevations:
-		return elevations[ node ]
-
-	request = urllib.request.Request(url, headers=header)
-
-	max_retry = 5
-	for retry in range(1, max_retry + 1):
-		try:
-			file = urllib.request.urlopen(request)
-			if retry > 1:
-				message ("\n")
-			break
-
-		except urllib.error.HTTPError as e:
-			if retry < max_retry:
-				message ("\tRetry #%i " % retry)
-				time.sleep(2 ** (retry-1))  # First retry after 1 second
-				retry_count += 1
-			else:
-				message("\t*** ELEVATION API UNAVAILABLE\n")
-				tree = ET.parse(e)
-				root = tree.getroot()
-				exception_text = root[0][0].text
-
-				if "exceptionCode" in root[0].attrib:
-					exception_code = root[0].attrib['exceptionCode']
-				else:
-					exception_code = ""
-
-				message ("\tHTTP Error %s: %s  " % (e.code, e.reason))
-				message ("\tException: [%s] %s\n" % (exception_code, exception_text))
-				return None
-
-	tree = ET.parse(file)
-	file.close()
-	root = tree.getroot()
-
-	ele_tag = root.find('ns0:ProcessOutputs/ns0:Output[ns2:Identifier="elevation"]/ns0:Data/ns0:LiteralData', ns)
-	ele = float(ele_tag.text)
-
-	if math.isnan(ele):
-		ele = None
-	if ele is None:
-		message (" *** NO ELEVATION: %s \n" % str(node))
-
-	elevations[ node ] = ele  # Store for possible identical request later
-	ele_count += 1
-
-	return ele
-
-
-
-# NEW:
-# Get elevation for a given node/coordinate
-# Note: Still testing this api
 # Note: Slow api, approx 4 calls / second
 
 def get_elevation(node):
 
 	global elevations, ele_count, retry_count
 
-	url = "https://ws.geonorge.no/hoydedata/v1/punkt?nord=%f&ost=%f&geojson=false&koordsys=4258" % (node[1], node[0])
-#	url = "https://wstest.geonorge.no/hoydedata/v1/punkt?nord=%f&ost=%f&geojson=false&koordsys=4258" % (node[1], node[0])
-#	url =  "https://wstest.geonorge.no/hoydedata/v1/punkt?nord=60.1&koordsys=4258&geojson=false&ost=11.1"
-#	message ("%s\n" % url)
-
 	if node in elevations:
 		return elevations[ node ]
 
+	url = "https://ws.geonorge.no/hoydedata/v1/punkt?nord=%f&ost=%f&geojson=false&koordsys=4258" % (node[1], node[0])
 	request = urllib.request.Request(url, headers=header)
 	file = urllib.request.urlopen(request)
 
 	result = json.load(file)
 	file.close()
-#	message ("Result: %s\n" % str(result))
-#	ele = result['features'][0]['geometry']['coordinates'][2]
 	ele = result['punkter'][0]['z']
 	elevations[ node ] = ele  # Store for possible identical request later
 	ele_count += 1
@@ -1531,28 +1444,55 @@ def get_place_names():
 
 	# Load all SSR place names in municipality
 
-	url = "https://obtitus.github.io/ssr2_to_osm_data/data/%s/%s.osm" % (municipality_id, municipality_id)
-	request = urllib.request.Request(url, headers=header)
-	file = urllib.request.urlopen(request)
+	filename = "stedsnavn_%s_%s.geojson" % (municipality_id, municipality_name.replace(" ", "_"))
+	folder_filename = os.path.expanduser(ssr_folder + filename)
 
-	tree = ET.parse(file)
-	file.close()
-	root = tree.getroot()
+	if os.path.isfile(filename) or os.path.isfile(folder_filename):
+		if not os.path.isfile(filename):
+			filename = folder_filename
+			file = open(filename)
+			data = json.load(file)
+			file.close()
 
-	for node in root.iter('node'):
-		entry = {
-			'coordinate': (float(node.get('lon')), float(node.get('lat'))),
-			'tags': {}
-		}	
-		for tag in node.iter('tag'):
-			if "name" in tag.get('k') or tag.get('k') in ["ssr:stedsnr", "ssr:type"]:
-				if tag.get('k') == "fixme":
-					if "multiple name" in tag.get('v'):
-						entry['tags']['fixme'] = "Multiple name tags, please choose one and add the other to alt_name"
-				else:
-					entry['tags'][ tag.get('k') ] = tag.get('v')
+			for feature in data['features']:
+				tags = {}
+				for key, value in iter(feature['properties'].items()):
+					if "name" in key or key in ["ssr:stedsnr", "TYPE"]:
+						if key == "TYPE":
+							tags['ssr:type'] = value
+						else:
+							tags[ key ] = value
+				entry = {
+					'coordinate':  (feature['geometry']['coordinates'][0], feature['geometry']['coordinates'][1]),
+					'tags': tags
+				}
+				ssr_places.append(entry)
 
-		ssr_places.append(entry)
+	# Alternative source for SSR
+
+	else:
+		url = "https://obtitus.github.io/ssr2_to_osm_data/data/%s/%s.osm" % (municipality_id, municipality_id)
+		request = urllib.request.Request(url, headers=header)
+		file = urllib.request.urlopen(request)
+
+		tree = ET.parse(file)
+		file.close()
+		root = tree.getroot()
+
+		for node in root.iter('node'):
+			entry = {
+				'coordinate': (float(node.get('lon')), float(node.get('lat'))),
+				'tags': {}
+			}	
+			for tag in node.iter('tag'):
+				if "name" in tag.get('k') or tag.get('k') in ["ssr:stedsnr", "ssr:type"]:
+					if tag.get('k') == "fixme":
+						if "multiple name" in tag.get('v'):
+							entry['tags']['fixme'] = "Multiple name tags, please choose one and add the other to alt_name"
+					else:
+						entry['tags'][ tag.get('k') ] = tag.get('v')
+
+			ssr_places.append(entry)
 
 	message ("\t%s place names in SSR file\n" % len(ssr_places))
 
@@ -1655,20 +1595,9 @@ def get_nve_lakes():
 	# Paging results (default 1000 lakes)
 
 	while more_lakes:
-
-#		Alternative url:
-#		url = "https://gis3.nve.no/map/rest/services/Innsjodatabase2/MapServer/find?" + \
-#				"searchText=%s&contains=true&searchFields=kommNr&layers=5&returnGeometry=false&returnUnformattedValues=true&f=pjson&resultOffset=%i&resultRecordCount=1000&orderByFields=areal_km2%20DESC" \
-#				% (municipality_id, nve_lake_count)
-
-#		url = "https://gis3.nve.no/map/rest/services/Innsjodatabase2/MapServer/5/query?" + \
-#				"where=kommNr%%3D%%27%s%%27&outFields=vatnLnr%%2Cnavn%%2Choyde%%2Careal_km2%%2CmagasinNr&returnGeometry=false&resultOffset=%i&resultRecordCount=1000&f=json" \
-#					% (municipality_id, nve_lake_count)
-
 		url = "https://nve.geodataonline.no/arcgis/rest/services/Innsjodatabase2/MapServer/5/query?" + \
 				"where=kommNr%%3D%%27%s%%27&outFields=vatnLnr%%2Cnavn%%2Choyde%%2Careal_km2%%2CmagasinNr&returnGeometry=false&resultOffset=%i&resultRecordCount=1000&f=json" \
 					% (municipality_id, nve_lake_count)
-
 
 		request = urllib.request.Request(url, headers=header)
 		file = urllib.request.urlopen(request)
@@ -1731,7 +1660,7 @@ def save_geojson(filename):
 					'type': feature['type'],
 					'coordinates': feature['coordinates']
 				},
-				'properties': dict(feature['extras'].items() + feature['tags'].items() + { 'gml_id': gml_id }.items())
+				'properties': dict(list(feature['extras'].items()) + list(feature['tags'].items()) + list({ 'gml_id': feature['gml_id'] }.items()))
 			}
 
 			json_features['features'].append(entry)
@@ -1852,7 +1781,13 @@ def save_osm(filename):
 			# Output way if possible to avoid relation
 			if len(feature['members']) == 1 and len(feature['members'][0]) == 1 and \
 					not ("natural" in feature['tags'] and "natural" in segments[ feature['members'][0][0] ]['tags']):
+
 				osm_feature = segments[ feature['members'][0][0] ]['etree']
+
+				# Add area=yes for piste:type=downhill when closed ways (not needed for relations)
+				if "piste:type" in feature['tags']:
+					osm_tag = ET.Element("tag", k="area", v="yes")
+					osm_feature.append(osm_tag)
 
 			else:
 				osm_id -= 1
