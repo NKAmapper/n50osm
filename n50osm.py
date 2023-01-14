@@ -16,7 +16,7 @@ from xml.etree import ElementTree as ET
 import utm
 
 
-version = "0.8.0"
+version = "1.0.0"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -24,9 +24,13 @@ ssr_folder = "~/Jottacloud/osm/stedsnavn/"  # Folder containing import SSR files
 
 coordinate_decimals = 7
 
-island_size = 100000  # Minimum square meters for place=island vs place=islet
+island_size = 100000  	# Minimum square meters for place=island vs place=islet
 
-lake_ele_size = 2000  # Minimum square meters for fetching elevation
+lake_ele_size = 2000  	# Minimum square meters for fetching elevation
+
+max_stream_error = 1.0 	# Minimum meters of elevation difference for turning direction of streams
+
+simplify_factor = 0.2   # Threshold for simplification
 
 data_categories = ["AdministrativeOmrader", "Arealdekke", "BygningerOgAnlegg", "Hoyde", "Restriksjonsomrader", "Samferdsel", "Stedsnavn"]
 
@@ -194,7 +198,7 @@ def tag_object(feature_type, geometry_type, properties, feature):
 	elif geometry_type == "område" and feature_type == "SportIdrettPlass":
 		if len(feature['coordinates']) > 1:
 			tags['leisure'] = "track"
-			tags['area'] = "yes"
+#			tags['area'] = "yes"
 		else:
 			tags['leisure'] = "pitch"
 
@@ -241,12 +245,14 @@ def tag_object(feature_type, geometry_type, properties, feature):
 	return (tags, missing_tags)
 
 
+
 # Output message
 
 def message (output_text):
 
 	sys.stdout.write (output_text)
 	sys.stdout.flush()
+
 
 
 # Format time
@@ -259,6 +265,7 @@ def timeformat (sec):
 		return "%i:%02i minutes" % (sec / 60, sec % 60)
 	else:
 		return "%i seconds" % sec
+
 
 
 # Calculate coordinate area of polygon in square meters
@@ -287,6 +294,7 @@ def polygon_area (polygon):
 		return 0
 
 
+
 # Calculate coordinate area of multipolygon, i.e. excluding inner polygons
 
 def multipolygon_area (multipolygon):
@@ -305,6 +313,7 @@ def multipolygon_area (multipolygon):
 
 	else:
 		return None
+
 
 
 # Calculate centroid of polygon
@@ -327,6 +336,7 @@ def polygon_centroid (polygon):
 
 	else:
 		return None
+
 
 
 # Tests whether point (x,y) is inside a polygon
@@ -357,6 +367,7 @@ def inside_polygon (point, polygon):
 		return None
 
 
+
 # Test whether point (x,y) is inside a multipolygon, i.e. not inside inner polygons
 
 def inside_multipolygon (point, multipolygon):
@@ -377,6 +388,63 @@ def inside_multipolygon (point, multipolygon):
 		return None
 
 
+
+# Compute closest distance from point p3 to line segment [s1, s2].
+# Works for short distances.
+
+def line_distance(s1, s2, p3):
+
+	x1, y1, x2, y2, x3, y3 = map(math.radians, [s1[0], s1[1], s2[0], s2[1], p3[0], p3[1]])  # Note: (x,y)
+
+	# Simplified reprojection of latitude
+	x1 = x1 * math.cos( y1 )
+	x2 = x2 * math.cos( y2 )
+	x3 = x3 * math.cos( y3 )
+
+	A = x3 - x1
+	B = y3 - y1
+	dx = x2 - x1
+	dy = y2 - y1
+
+	dot = (x3 - x1)*dx + (y3 - y1)*dy
+	len_sq = dx*dx + dy*dy
+
+	if len_sq != 0:  # in case of zero length line
+		param = dot / len_sq
+	else:
+		param = -1
+
+	if param < 0:
+		x4 = x1
+		y4 = y1
+	elif param > 1:
+		x4 = x2
+		y4 = y2
+	else:
+		x4 = x1 + param * dx
+		y4 = y1 + param * dy
+
+	# Also compute distance from p to segment
+
+	x = x4 - x3
+	y = y4 - y3
+	distance = 6371000 * math.sqrt( x*x + y*y )  # In meters
+
+	'''
+	# Project back to longitude/latitude
+
+	x4 = x4 / math.cos(y4)
+
+	lon = math.degrees(x4)
+	lat = math.degrees(y4)
+
+	return (lon, lat, distance)
+	'''
+
+	return distance
+
+
+
 # Calculate new node with given distance offset in meters
 # Works over short distances
 
@@ -388,6 +456,7 @@ def coordinate_offset (node, distance):
 	longitude = node[0] + (distance * m) / math.cos( math.radians(node[1]) )
 
 	return (longitude, latitude)
+
 
 
 # Identify bounds of line coordinates
@@ -417,26 +486,31 @@ def get_bbox(coordinates, perimeter):
 	return [min_node, max_node]
 
 
+
 # Create feature with one point
 
-def create_point (node, gml_id, note):
+def create_point (node, tags, gml_id = None):
 
 	if debug:
+		if isinstance(tags, str):
+			tags = {'note': tags}
 		entry = {
 			'object': 'Debug',
 			'type': 'Point',
 			'coordinates': node,
 			'members': [],
 			'tags': {},
-			'extras': {
-				'objekttype': 'Debug',
-				'note': note
-			}
+			'extras': {'objekttype': 'Debug'}
 		}
+		if isinstance(tags, str):
+			entry['extras']['note'] = tags
+		else:
+			entry['extras'].update(tags)
 		if gml_id:
 			entry['gml_id'] = gml_id
 
 		features.append(entry)
+
 
 
 # Get list of coordinates from GML
@@ -459,7 +533,7 @@ def parse_coordinates (coord_text):
 			coordinates.append(node)
 		else:
 #			message ("\t*** DELETED DUPLICATE NODE: %s %s\n" % (node, gml_id))
-			create_point(node, gml_id, "deleted duplicate")
+			create_point(node, "deleted duplicate", gml_id=gml_id)
 
 	# Remove single outlayer node
 
@@ -468,7 +542,7 @@ def parse_coordinates (coord_text):
 		while i < len(coordinates):
 			if i > 1 and coordinates[i] == coordinates[i - 2]:
 #				message ("\t*** DELETED ARTEFACT NODE: %s %s\n" % (coordinates[ i - 1 ], gml_id))
-				create_point(copy.deepcopy(coordinates[ i - 1 ]), gml_id, "deleted artefact")
+				create_point(copy.deepcopy(coordinates[ i - 1 ]), "deleted artefact", gml_id=gml_id)
 				coordinates.pop(i)
 				coordinates.pop(i - 1)
 				i -= 1
@@ -483,6 +557,7 @@ def parse_coordinates (coord_text):
 #		message ("\t*** SHORT WAY %s\n" % gml_id)
 
 	return coordinates
+
 
 
 # Get name or id of municipality from GeoNorge api
@@ -524,6 +599,7 @@ def get_municipality_name (query):
 			sys.exit("\tMore than one municipality found: %s\n\n" % ", ".join(municipalities))
 
 
+
 # Load conversion CSV table for tagging building types
 # Format in CSV: "key=value + key=value + ..."
 
@@ -552,6 +628,7 @@ def load_building_types():
 	file.close()
 
 
+
 # Compute length based on coordinates (not in meters)
 
 def simple_length (coord):
@@ -561,6 +638,7 @@ def simple_length (coord):
 		length += (coord[i+1][0] - coord[i][0])**2 + ((coord[i+1][1] - coord[i][1])**2) * 0.5
 
 	return length
+
 
 
 # Split patch if self-intersecting or touching polygon
@@ -584,6 +662,7 @@ def split_patch (coordinates):
 	return [ coordinates ]
 
 
+
 # Get all app properties from nested XML; recursive search
 
 def get_property(top,  ns_app):
@@ -600,6 +679,7 @@ def get_property(top,  ns_app):
 		properties.update(get_property(child, ns_app))
 
 	return properties
+
 
 
 # Load N50 topo data from Kartverket
@@ -811,6 +891,7 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 	message ("\tRun time %s\n" % (timeformat(time.time() - lap)))
 
 
+
 # Create missing KantUtsnitt segments to get complete polygons
 
 def create_border_segments(patch, members, gml_id, match):
@@ -866,12 +947,14 @@ def create_border_segments(patch, members, gml_id, match):
 			start_index = end_index
 
 
+
 # Function for sorting member segments of polygon relation
 # Index 1 used to avoid equal 0/-1 positions
 
 def segment_position(segment_index, patch):
 
 	return patch.index(segments[segment_index]['coordinates'][1])
+
 
 
 # Fix data structure:
@@ -933,10 +1016,14 @@ def split_polygons():
 							segment['object'] in ["Innsjøkant", "InnsjøkantRegulert", "ElvBekkKant", "KantUtsnitt"]:
 
 							segment['used'] += 1
+
+							# Check if feature polygon and segment line have same direction
 							node1 = patch.index(segment['coordinates'][0])
 							node2 = patch.index(segment['coordinates'][1])
+							same_direction = (node1 + 1 == node2 or patch[0] == patch[-1] and node1 == len(patch) - 2 and node2 == 0)
 
-							if not (node1 + 1 == node2 or patch[0] == patch[-1] and node1 == len(patch) - 2 and node2 == 0):   
+							# Reverse to get aligned. Opposite direction for coastline.
+							if feature['object'] == "Havflate" and same_direction or not feature['object'] == "Havflate" and not same_direction:   
 								segment['coordinates'].reverse()
 								segment['extras']['reversert'] = "yes"
 
@@ -968,6 +1055,7 @@ def split_polygons():
 
 	message ("\t%i splits\n" % split_count)
 	message ("\tRun time %s\n" % (timeformat(time.time() - lap)))
+
 
 
 # Fix coastline
@@ -1246,93 +1334,247 @@ def match_nodes():
 
 
 
-# Get elevation for a given node/coordinate
-# Note: Slow api, approx 4 calls / second
+# Get elevation for one point/coordinate or for a list of points.
+# Returns result for single point only. List of points are stored in elevations dict.
+# Note: Slow api, approx 3 calls / second for single points, or quicker 35 points / second for batches of 50 points.
 
-def get_elevation(node):
+def get_elevation(input_nodes):
 
-	global elevations, ele_count, retry_count
+	global elevations
 
-	if node in elevations:
-		return elevations[ node ]
+	if isinstance(input_nodes, tuple):
+		if input_nodes in elevations:
+			return elevations[ input_nodes ]
+		node_list = [ input_nodes ]
+	else:
+		node_list = []
+		for node in input_nodes:
+			if node not in elevations:
+				node_list.append(node)
 
-	url = "https://ws.geonorge.no/hoydedata/v1/punkt?nord=%f&ost=%f&geojson=false&koordsys=4258" % (node[1], node[0])
-	request = urllib.request.Request(url, headers=header)
-	file = urllib.request.urlopen(request)
+	count_missing = 0
+	count_bad = 0
 
-	result = json.load(file)
-	file.close()
-	ele = result['punkter'][0]['z']
-	elevations[ node ] = ele  # Store for possible identical request later
-	ele_count += 1
+	for i in range(0, len(node_list), 50):
+		message ("\r\t%i " % ((len(node_list) - i)//50 * 50))
 
-	if ele is None:
-		message (" *** NO ELEVATION: %s \n" % str(result))
-#		ele = 0.0
+		nodes_string = json.dumps(node_list[ i : i + 50 ]).replace(" ", "")
+		url = "https://ws.geonorge.no/hoydedata/v1/datakilder/dtm1/punkt?punkter=%s&geojson=false&koordsys=4258" % nodes_string
+		request = urllib.request.Request(url, headers=header)
+		file = urllib.request.urlopen(request)
+		result = json.load(file)
+		file.close()
 
-	return ele
+		for node in result['punkter']:
+			if node['z'] is not None:
+				elevations[ (node['x'],node['y']) ] = node['z']  # Store for possible identical request later
+				create_point((node['x'],node['y']), {'ele': '%.2f dtm' % node['z']})
+			else:
+				count_bad += 1
+				elevations[ (node['x'],node['y']) ] = 0.0  # Only coastline points observed (alternative: None)
+#				message (" *** NO DTM ELEVATION: %s \n" % str(node))
+				create_point((node['x'],node['y']), {'ele': 'Missing'})
+
+	if isinstance(input_nodes, tuple):
+		return elevations[ input_nodes ]
+
+	if count_missing > 0 or count_bad > 0:
+		message ("\r\t%i low quality elevations, %i elevations not found\n" % (count_bad, count_missing))
 
 
-# Turn streams which have uphill direction
+# Get correct direction for streams by checking start/end elevations.
+# Also traverse stream "network" to verify direction for almost flat streams (very small elevations).
 
 def fix_stream_direction():
 
-	global elevations, ele_count, retry_count
+	# Recursive function which will traverse network of streams to verify 
+	# Should start from a stream segment with an already confirmed direction.
+	# Will traverse upwards until stream segment with confirmed direction is found, and will then align streams in between with same direction.
 
-	elevations = {}  # Already fetched elevations from api
-	ele_count = 0    # Numbr of api calls during program execution
-	retry_count = 0  # Number of retry to api
-	max_error = 1.0  # Meters of elevation difference
+	def traverse_streams (end_junction, stream, min_ele, branch):
+
+		if end_junction in branch:  # Self-intersecting branch
+			return False
+
+		if "decline" in stream:
+			if end_junction == junctions[ stream['coordinates'][-1] ]['id']:  # Correct order
+				return True
+			else:
+				return False
+
+		if end_junction == junctions[ stream['coordinates'][-1] ]['id']:
+			start_node = stream['coordinates'][0]
+			end_node = stream['coordinates'][-1]
+		else:
+			start_node = stream['coordinates'][-1]
+			end_node = stream['coordinates'][0]
+
+		start_junction = junctions[ start_node ]['id']
+
+		if elevations[ start_node ] is None or elevations[ end_node ] is None:  # Missing elevation
+			return False
+
+		if (elevations[ start_node ] - elevations[ end_node ] >= max_stream_error
+				or len(junctions[ start_node ]['streams']) == 1 and elevations[ start_node ] - min_ele >= max_stream_error):  # Confirmed	
+			stream['decline'] = "Nettverk"
+			stream['extras']['bekk'] = "Nettverk"
+			if end_node == stream['coordinates'][0]:
+				stream['coordinates'].reverse()
+				stream['extras']['reversert'] = "yes"
+			return True
+
+		elif len(junctions[ start_node ]['streams']) == 1:  # Dead end, still flat
+			return False
+
+		elif elevations[ start_node ] - elevations[ end_node ] <= - max_stream_error:  # Wrong direction (rare)
+			return False
+
+		else:  # Too flat, keep traversing upwards
+			result = False
+			for next_stream in junctions[ start_node ]['streams']:
+				result = traverse_streams(start_junction, next_stream, min_ele, branch + [ end_junction ]) or result
+
+			if result:  # Confirmed stream found upwards
+				stream['decline'] = "Network"
+				stream['extras']['bekk'] = "Network"
+				if end_node == stream['coordinates'][0]:
+					stream['coordinates'].reverse()
+					stream['extras']['reversert'] = "yes"
+				return True
+			else:
+				return False
+
+
+	# Start with collect all stream junctions/end points.
 
 	lap = time.time()
-
 	message ("Load elevation data from Kartverket and reverse streams...\n")
-
+	streams = []
+	junctions = {}  # Will contain all nodes where stream endpoints intersects, including through a larger body of water.
+	ele_list = set()
 	stream_count = 0
+	junction_id = 0
+
 	for feature in features:
-		if feature['object'] == "ElvBekk" and feature['type'] == "LineString":	
+		if feature['object'] == "ElvBekk" and feature['type'] == "LineString":
+			streams.append(feature)
+			for i in [0,-1]:
+				if feature['coordinates'][i] in junctions:
+					junctions[ feature['coordinates'][i] ]['streams'].append(feature)
+				else:
+					junction_id += 1
+					junctions[ feature['coordinates'][i] ] = {
+						'streams': [ feature ],
+						'id': junction_id,
+						'ele': None
+					}
+			ele_list.add(feature['coordinates'][0])
+			ele_list.add(feature['coordinates'][-1])
 			stream_count += 1
 
 	message ("\t%i streams\n" % stream_count)
 
-	api_count = stream_count
-	reverse_count = 0
+	# Include lakes as junctions
 
-	# Loop all streams and check elevation difference between first and last nodes
+	junction_set = set(junctions.keys())
+	lake_count = 0
 
 	for feature in features:
-		if feature['object'] == "ElvBekk" and feature['type'] == "LineString":
-			api_count -= 1
+		if feature['object'] in ["Innsjø", "InnsjøRegulert", "ElvBekk"] and feature['type'] == "Polygon":
+			lake_streams = []
 
-			message ("\r\t%i " % api_count)
+			# Discover all connections between streams and lake
+			for polygon in feature['coordinates']:
+				lake_junctions = junction_set.intersection(polygon)
+				if lake_junctions:
+					for node in lake_junctions:
+						for stream  in junctions[ node ]['streams']:
+							if stream not in lake_streams:
+								lake_streams.append(stream)
 
-			ele_start = get_elevation(feature['coordinates'][0])
-			if ele_start is None:
-				continue
+			# Make all lake junctions contain all streams which are connected to the lake
+			if lake_streams:
+				lake_count += 1
+				junction_id += 1
+				for node in lake_junctions:
+					junctions[ node ]['streams'] = lake_streams
+					junctions[ node ]['id'] = junction_id
 
-			ele_end = get_elevation(feature['coordinates'][-1])
-			if ele_end is None:
-				continue
+	for node in junctions:
+		create_point(node, {'junction': '[%i]' % junctions[node]['id']})
+
+	message ("\t%i lakes connecting streams\n" % lake_count)					
+
+	# 1st pass: Get elevations and confirm or reverse direction
+
+	get_elevation(list(ele_list))
+
+	reverse_count = 0
+	for feature in streams:
+		ele_start = elevations[ feature['coordinates'][0] ]
+		ele_end = elevations[ feature['coordinates'][-1] ]
+		if ele_start is not None and ele_end is not None:
 
 			# Reverse direction of stream if within error margin
-
-			if ele_end - ele_start >= max_error:
+			if ele_end - ele_start >= max_stream_error:
 				feature['coordinates'].reverse()
 				reverse_count += 1
 				feature['extras']['reversert'] = "%.2f" % (ele_end - ele_start)
-			else:
 				feature['extras']['bekk'] = "%.2f" % (ele_end - ele_start)
+				feature['decline'] = ele_end - ele_start
+			elif ele_start - ele_end >= max_stream_error:
+				feature['decline'] = ele_start - ele_end
+				feature['extras']['bekk'] = "%.2f" % (ele_start - ele_end)
 
-			if abs(ele_end - ele_start) < 2 * max_error:
-				feature['tags']['fixme'] = "Please check direction (%.1fm elevation)" % (ele_end - ele_start)
+	# 2nd pass: Traverse stream "network" and try determining direction based on connected streams
 
-	if retry_count > 0:
-		message ("\t%i retry to api\n" % retry_count)
+	for feature in streams:
+		if "decline" in feature:
+			for stream in junctions[ feature['coordinates'][0] ]['streams']:
+				start_junction = junctions[ feature['coordinates'][0] ]['id']
+				end_junction = junctions[ feature['coordinates'][-1] ]['id'] 
+				traverse_streams(start_junction, stream, elevations[ feature['coordinates'][-1] ], [ end_junction ])
+
+
+	# 3rd pass: Collect remaining streams which ends on coastline (they have a confirmed direction) and traverse
+
+	stream_ends = set()
+	for feature in streams:
+		if "decline" not in feature and (elevations[ feature['coordinates'][-1] ] is None or elevations[ feature['coordinates'][-1] ] < 30):
+			stream_ends.add(feature['coordinates'][0])
+			stream_ends.add(feature['coordinates'][-1])
+
+	coastline_intersections = set()
+	for segment in segments:
+		if segment['object'] == "Kystkontur":
+			stream_intersections = stream_ends.intersection(segment['coordinates'])
+			coastline_intersections.update(stream_intersections)
+
+	for point in coastline_intersections:
+		for stream in junctions[ point ]['streams']:
+			if "decline" not in stream:
+				traverse_streams(junctions[ point ]['id'], stream, 0.0, [])
+
+	# Finally, tag fixme for remaining streams which have undetermined direction
+
+	check_count = 0
+	reverse_count = 0
+	for feature in streams:
+		if "decline" not in feature:
+			if elevations[ feature['coordinates'][0] ] is not None and elevations[ feature['coordinates'][-1] ] is not None:
+				ele_diff = elevations[ feature['coordinates'][0] ] - elevations[ feature['coordinates'][-1] ]
+				feature['tags']['FIXME'] = "Please check direction (%.2fm decline)" % ele_diff
+			else:
+				feature['tags']['FIXME'] = "Please check direction" 
+			check_count += 1
+		if "reversert" in feature['extras']:
+			reverse_count += 1
 
 	duration = time.time() - lap
-	message ("\r\t%i streams, %i reversed, %i api calls\n" \
-				% (stream_count, reverse_count, ele_count))
-	message ("\tRun time %s, %.2f streams per second\n" % (timeformat(duration), stream_count / duration))
+	message ("\r\t%i streams reversed, %i remaining with unclear direction (%i%%)\n"
+				% (reverse_count, check_count, 100 * check_count / stream_count))
+	message ("\tRun time %s, %i streams per second\n" % (timeformat(duration), stream_count / duration))
+
 
 
 # Load place names from SSR within given bbox 
@@ -1386,7 +1628,7 @@ def get_ssr_name (feature, name_categories):
 					if len(alt_names) > 1:
 						if name != place['tags']['name']:
 							alt_names.insert(0, "%s [NVE]" % name)
-						feature['tags']['fixme'] = "Alternative names: " + ", ".join(alt_names)
+						feature['tags']['FIXME'] = "Alternative names: " + ", ".join(alt_names)
 					name_count += 1
 					break
 
@@ -1403,25 +1645,17 @@ def get_ssr_name (feature, name_categories):
 			feature['tags'].update(found_names[0]['tags'])
 			feature['extras']['ssr:type'] = feature['tags'].pop("ssr:type", None)
 			if len(alt_names) > 1:
-				feature['tags']['fixme'] = "Alternative names: " + ", ".join(alt_names)
+				feature['tags']['FIXME'] = "Alternative names: " + ", ".join(alt_names)
 			name_count += 1
 
 		else:
-			feature['tags']['fixme'] = "Consider names: " + ", ".join(alt_names)
+			feature['tags']['FIXME'] = "Consider names: " + ", ".join(alt_names)
 
 		return found_names[0]['coordinate']
 
 	else:
 		return None
 
-
-# Get place names for a category
-
-def get_category_place_names(n50_categories, ssr_categories):
-
-	for feature in features:
-		if feature['object'] in n50_categories:
-			get_ssr_name(feature, ssr_categories)
 
 
 # Get place names for islands, glaciers etc.
@@ -1430,13 +1664,19 @@ def get_category_place_names(n50_categories, ssr_categories):
 def get_place_names():
 
 	global ssr_places, name_count
-	global elevations, ele_count, retry_count
+	global elevations
+
+
+	# Get place names for a category
+
+	def get_category_place_names(n50_categories, ssr_categories):
+
+		for feature in features:
+			if feature['object'] in n50_categories:
+				get_ssr_name(feature, ssr_categories)
+
 
 	message ("Load place names from SSR...\n")
-
-	elevations = {}
-	ele_count = 0
-	retry_count = 0
 
 	lap = time.time()
 	name_count = 0
@@ -1448,29 +1688,31 @@ def get_place_names():
 	folder_filename = os.path.expanduser(ssr_folder + filename)
 
 	if os.path.isfile(filename) or os.path.isfile(folder_filename):
+		ssr_source = "ssr2osm"
 		if not os.path.isfile(filename):
 			filename = folder_filename
-			file = open(filename)
-			data = json.load(file)
-			file.close()
+		file = open(filename)
+		data = json.load(file)
+		file.close()
 
-			for feature in data['features']:
-				tags = {}
-				for key, value in iter(feature['properties'].items()):
-					if "name" in key or key in ["ssr:stedsnr", "TYPE"]:
-						if key == "TYPE":
-							tags['ssr:type'] = value
-						else:
-							tags[ key ] = value
-				entry = {
-					'coordinate':  (feature['geometry']['coordinates'][0], feature['geometry']['coordinates'][1]),
-					'tags': tags
-				}
-				ssr_places.append(entry)
+		for feature in data['features']:
+			tags = {}
+			for key, value in iter(feature['properties'].items()):
+				if "name" in key or key in ["ssr:stedsnr", "TYPE"]:
+					if key == "TYPE":
+						tags['ssr:type'] = value
+					else:
+						tags[ key ] = value
+			entry = {
+				'coordinate':  (feature['geometry']['coordinates'][0], feature['geometry']['coordinates'][1]),
+				'tags': tags
+			}
+			ssr_places.append(entry)
 
 	# Alternative source for SSR
 
 	else:
+		ssr_source = "obtitus"
 		url = "https://obtitus.github.io/ssr2_to_osm_data/data/%s/%s.osm" % (municipality_id, municipality_id)
 		request = urllib.request.Request(url, headers=header)
 		file = urllib.request.urlopen(request)
@@ -1488,13 +1730,13 @@ def get_place_names():
 				if "name" in tag.get('k') or tag.get('k') in ["ssr:stedsnr", "ssr:type"]:
 					if tag.get('k') == "fixme":
 						if "multiple name" in tag.get('v'):
-							entry['tags']['fixme'] = "Multiple name tags, please choose one and add the other to alt_name"
+							entry['tags']['FIXME'] = "Multiple name tags, please choose one and add the other to alt_name"
 					else:
 						entry['tags'][ tag.get('k') ] = tag.get('v')
 
 			ssr_places.append(entry)
 
-	message ("\t%s place names in SSR file\n" % len(ssr_places))
+	message ("\t%i place names in SSR file from %s\n" % (len(ssr_places), ssr_source))
 
 	# Get island names
 
@@ -1504,13 +1746,15 @@ def get_place_names():
 			if "place" in element['tags'] and element['tags']['place'] in ["island", "islet"]:
 				get_ssr_name(element, name_category)
 
-	# Get lake names + missing elevations for lakes
+	# Get lake names + build list of lake center coordinate to get elevation
 
 	if lake_ele and data_category == "Arealdekke":
 		message ("\tLoading lake elevations...\n")
 
 	name_category = ["innsjø", "delAvInnsjø", "vann", "gruppeAvVann", "kanal", "gruppeAvTjern", "tjern", "lon", "pytt"]
 	lake_ele_count = 0
+	ele_nodes = []
+	lake_elevations = []
 
 	for feature in features:
 		if feature['object'] in ["Innsjø", "InnsjøRegulert"]:
@@ -1521,7 +1765,7 @@ def get_place_names():
 
 			# Get lake's elevation if missing, and if lake is larger than threshold
 
-			if lake_ele and "ele" not in feature['tags'] and (lake_node or area >= lake_ele_size):
+			if lake_ele and ("ele" not in feature['tags'] and area >= lake_ele_size or debug):  # and lake_node
 
 				# Check that name coordinate is not on lake's island
 				if lake_node:
@@ -1543,18 +1787,28 @@ def get_place_names():
 					feature['extras']['elevation'] = "Based on first node"
 
 				if lake_node:
-					ele = get_elevation(lake_node)
-					if ele:
-						feature['tags']['ele'] = str(int(round(ele)))
-						create_point(lake_node, "", "elevation %.1f" % ele)
-						lake_ele_count += 1
-						message ("\r\t%i " % lake_ele_count)
+					ele_nodes.append(lake_node)
+					lake_elevations.append({'feature': feature, 'center': lake_node})
+
+	# Get elevations from api and assign to lakes
+
+	if lake_ele:
+		get_elevation(ele_nodes)
+
+		for lake in lake_elevations:
+			ele = elevations[ lake['center'] ]
+			if ele is not None:
+				feature = lake['feature']
+				if "ele" not in feature['tags'] and float(feature['extras']['areal']) >= lake_ele_size:
+					feature['tags']['ele'] = str(int(max(ele, 0)))
+#				create_point(lake['center'], {'ele': '%.2f' % ele})  # Done in get_elevation 
+				lake_ele_count += 1
 
 	# Create lake centroid nodes for debugging
 	for feature in features:
 		if feature['object'] in ["Innsjø", "InnsjøRegulert"]:
 			centroid = polygon_centroid(feature['coordinates'][0])
-			create_point(centroid, feature['gml_id'], "centroid")
+#			create_point(centroid, "centroid", gml_id=feature['gml_id'])
 
 	# Get glacier names
 	get_category_place_names(["SnøIsbre"], ["isbre", "fonn", "iskuppel"])
@@ -1574,10 +1828,11 @@ def get_place_names():
 	# Get waterfall (point)
 	get_category_place_names(["Foss"], ["foss", "stryk"])
 
-	message ("\r\t%i place names found\n" % name_count)
 	if lake_ele:
-		message ("\t%i lake elevations found\n" % lake_ele_count)
+		message ("\r\t%i extra lake elevations found\n" % lake_ele_count)
+	message ("\t%i place names found\n" % name_count)
 	message ("\tRun time %s\n" % (timeformat(time.time() - lap)))
+
 
 
 # Get name from NVE Innsjødatabasen
@@ -1641,6 +1896,81 @@ def get_nve_lakes():
 	message ("\t%i N50 lakes matched against %i NVE lakes\n" % (n50_lake_count, nve_lake_count))
 
 
+
+# Reduce number of nodes in geometry lines
+
+def simplify_geometry():
+
+	# Simplify line, i.e. reduce nodes within epsilon distance.
+	# Ramer-Douglas-Peucker method: https://en.wikipedia.org/wiki/Ramer–Douglas–Peucker_algorithm
+
+	def simplify_line(line, epsilon):
+
+		dmax = 0.0
+		index = 0
+		for i in range(1, len(line) - 1):
+			d = line_distance(line[0], line[-1], line[i])
+			if d > dmax:
+				index = i
+				dmax = d
+
+		if dmax >= epsilon:
+			new_line = simplify_line(line[:index+1], epsilon)[:-1] + simplify_line(line[index:], epsilon)
+		else:
+			new_line = [line[0], line[-1]]
+
+		return new_line
+
+
+	# Partition line into sublines at intersections before simplifying each partition
+
+	def partition_and_simplify(line):
+
+		remaining = line.copy()
+		new_line = [ remaining.pop(0) ]
+
+		while remaining:
+			subline = [ new_line[-1] ]
+
+			while remaining and not remaining[0] in nodes:  # Continue until tagged or intersecting
+				subline.append(remaining.pop(0))
+
+			if remaining:
+				subline.append(remaining.pop(0))
+
+			new_line += simplify_line(subline, simplify_factor)[1:]
+
+		return new_line
+
+
+	# Simplify all lines which will be included in output
+
+	message ("\tSimplify geometry by %.1f factor ... " % simplify_factor)
+
+	new_count = 0
+	old_count = 0
+
+	for segment in segments:
+		if segment['used'] > 0:
+			old_count += len(segment['coordinates'])
+			segment['coordinates'] = partition_and_simplify(segment['coordinates'])
+			new_count += len(segment['coordinates'])
+
+	for feature in features:
+		if feature['type'] == "LineString":
+			old_count += len(feature['coordinates'])
+			feature['coordinates'] = partition_and_simplify(feature['coordinates'])
+			new_count += len(feature['coordinates'])		
+
+	if old_count > 0:
+		removed = 100.0 * (old_count - new_count) / old_count
+	else:
+		removed = 0	
+
+	message ("%i nodes removed (%i%%)\n" % (old_count - new_count, removed))
+
+
+
 # Save geojson file for reviewing raw input data from GML file
 
 def save_geojson(filename):
@@ -1697,6 +2027,9 @@ def indent_tree(elem, level=0):
 def save_osm(filename):
 
 	message ("Save to '%s' file...\n" % filename)
+
+	if simplify:
+		simplify_geometry()
 
 	osm_node_ids = {}  # Will contain osm_id of each common node
 	relation_count = 0
@@ -1836,24 +2169,26 @@ if __name__ == '__main__':
 	features = []        # All geometry and tags
 	segments = []        # Line segments which are shared by one or more polygons
 	nodes = set()        # Common nodes at intersections, including start/end nodes of segments [lon,lat]
+	elevations = {}		 # Elevations fetched from api
 	building_tags = {}   # Conversion table from building type to osm tag
 	object_count = {}    # Count loaded object types
 
 	debug =       False  # Include debug tags and unused segments
 	n50_tags =    False  # Include property tags from N50 in output
 	json_output = False  # Output complete and unprocessed geometry in geojson format
-	turn_stream = False  # Load elevation data to check direction of streams
-	lake_ele =    False  # Load elevation for lakes
+	turn_stream = True   # Load elevation data to check direction of streams
+	lake_ele =    True   # Load elevation for lakes
 	no_name =     False  # Do not load SSR place names
 	no_nve =      False  # Do not load NVE lake data
 	no_node =     False  # Do not merge common nodes at intersections
+	simplify =    True   # Simplify geometry lines
 
 	# Parse parameters
 
 	if len(sys.argv) < 3:
 		message ("Please provide 1) municipality, and 2) data category parameter.\n")
 		message ("Data categories: %s\n" % ", ".join(data_categories))
-		message ("Options: -debug, -tag, -geojson, -stream, -ele, -noname, -nonve, -nonode\n\n")
+		message ("Options: -debug, -tag, -geojson, -nostream, -noele, -noname, -nonve, -nonode, -nosimplify\n\n")
 		sys.exit()
 
 	# Get municipality
@@ -1884,16 +2219,18 @@ if __name__ == '__main__':
 		n50_tags = True
 	if "-geojson" in sys.argv or "-json" in sys.argv:
 		json_output = True
-	if "-stream" in sys.argv or "-bekk" in sys.argv:
+	if "-noele" in sys.argv or "-nohøyde" in sys.argv:
+		lake_ele = False
+	if "-nostream" in sys.argv or "-nobekk" in sys.argv:
 		turn_stream = True
-	if "-ele" in sys.argv or "-høyde" in sys.argv:
-		lake_ele = True
 	if "-noname" in sys.argv:
 		no_name = True
 	if "-nonve" in sys.argv:
 		no_nve = True
 	if "-nonode" in sys.argv:
 		no_node = True
+	if "-nosimplify" in sys.argv:
+		simplify = False
 
 	if not turn_stream or not lake_ele:
 		message ("*** Remember -stream and -ele options before importing.\n")
@@ -1912,10 +2249,10 @@ if __name__ == '__main__':
 	else:
 		split_polygons()
 		if data_category == "Arealdekke":
-			if turn_stream:
-				fix_stream_direction()  # Note: Slow api
 			if not no_nve:
 				get_nve_lakes()
+			if turn_stream:
+				fix_stream_direction()
 			find_islands()  # Note: "Havflate" is removed at the end of this process
 			if not no_name:
 				get_place_names()
