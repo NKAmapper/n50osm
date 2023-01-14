@@ -16,7 +16,7 @@ from xml.etree import ElementTree as ET
 import utm
 
 
-version = "1.0.0"
+version = "1.0.1"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -1199,7 +1199,7 @@ def find_islands():
 				coordinates += segment['coordinates'][1:]	
 
 			area = polygon_area(coordinates)
-			if area > 0:
+			if area < 0:
 				continue  # Avoid lakes
 
 			if abs(area) > island_size:
@@ -1353,7 +1353,6 @@ def get_elevation(input_nodes):
 				node_list.append(node)
 
 	count_missing = 0
-	count_bad = 0
 
 	for i in range(0, len(node_list), 50):
 		message ("\r\t%i " % ((len(node_list) - i)//50 * 50))
@@ -1370,16 +1369,17 @@ def get_elevation(input_nodes):
 				elevations[ (node['x'],node['y']) ] = node['z']  # Store for possible identical request later
 				create_point((node['x'],node['y']), {'ele': '%.2f dtm' % node['z']})
 			else:
-				count_bad += 1
-				elevations[ (node['x'],node['y']) ] = 0.0  # Only coastline points observed (alternative: None)
+				count_missing += 1
+				elevations[ (node['x'],node['y']) ] = None  # Only coastline points observed
 #				message (" *** NO DTM ELEVATION: %s \n" % str(node))
 				create_point((node['x'],node['y']), {'ele': 'Missing'})
 
 	if isinstance(input_nodes, tuple):
 		return elevations[ input_nodes ]
 
-	if count_missing > 0 or count_bad > 0:
-		message ("\r\t%i low quality elevations, %i elevations not found\n" % (count_bad, count_missing))
+	if count_missing > 0:
+		message ("\r\t%i elevations not found\n" % count_missing)
+
 
 
 # Get correct direction for streams by checking start/end elevations.
@@ -1505,15 +1505,34 @@ def fix_stream_direction():
 
 	message ("\t%i lakes connecting streams\n" % lake_count)					
 
-	# 1st pass: Get elevations and confirm or reverse direction
+	# Set zero elevation for coastline and reverse if needed (known direction)
+
+	coastline_intersections = set()
+	for segment in segments:
+		if segment['object'] == "Kystkontur":
+			stream_intersections = junction_set.intersection(segment['coordinates'])
+			coastline_intersections.update(stream_intersections)
+
+	for point in coastline_intersections:
+		elevations[ point ] = 0.0
+		for stream in junctions[ point ]['streams']:
+			if point == stream['coordinates'][0]:
+				stream['coordinates'].reverse()
+				stream['extras']['bekk'] = "Coastline"
+				stream['extras']['reversert'] = "Coastline"
+			stream['decline'] = "Coastline"
+
+	# Load elevations
 
 	get_elevation(list(ele_list))
+
+	# 1st pass: Confirm direction or reverse based on elevation difference
 
 	reverse_count = 0
 	for feature in streams:
 		ele_start = elevations[ feature['coordinates'][0] ]
 		ele_end = elevations[ feature['coordinates'][-1] ]
-		if ele_start is not None and ele_end is not None:
+		if ele_start is not None and ele_end is not None and "decline" not in feature:
 
 			# Reverse direction of stream if within error margin
 			if ele_end - ele_start >= max_stream_error:
@@ -1535,26 +1554,13 @@ def fix_stream_direction():
 				end_junction = junctions[ feature['coordinates'][-1] ]['id'] 
 				traverse_streams(start_junction, stream, elevations[ feature['coordinates'][-1] ], [ end_junction ])
 
-
-	# 3rd pass: Collect remaining streams which ends on coastline (they have a confirmed direction) and traverse
-
-	stream_ends = set()
-	for feature in streams:
-		if "decline" not in feature and (elevations[ feature['coordinates'][-1] ] is None or elevations[ feature['coordinates'][-1] ] < 30):
-			stream_ends.add(feature['coordinates'][0])
-			stream_ends.add(feature['coordinates'][-1])
-
-	coastline_intersections = set()
-	for segment in segments:
-		if segment['object'] == "Kystkontur":
-			stream_intersections = stream_ends.intersection(segment['coordinates'])
-			coastline_intersections.update(stream_intersections)
-
+	# 3rd pass: Traverse any remaining streams ending in coastline (they have known direction)
+	'''
 	for point in coastline_intersections:
 		for stream in junctions[ point ]['streams']:
 			if "decline" not in stream:
 				traverse_streams(junctions[ point ]['id'], stream, 0.0, [])
-
+	'''
 	# Finally, tag fixme for remaining streams which have undetermined direction
 
 	check_count = 0
@@ -1571,7 +1577,7 @@ def fix_stream_direction():
 			reverse_count += 1
 
 	duration = time.time() - lap
-	message ("\r\t%i streams reversed, %i remaining with unclear direction (%i%%)\n"
+	message ("\r\t%i streams reversed, %i streams remaining with unclear direction (%i%%)\n"
 				% (reverse_count, check_count, 100 * check_count / stream_count))
 	message ("\tRun time %s, %i streams per second\n" % (timeformat(duration), stream_count / duration))
 
