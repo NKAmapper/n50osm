@@ -19,11 +19,12 @@ Paramters:
   * <code>-debug</code> - Include extra tags and lines for debugging, including original N50 tags.
   * <code>-tag</code> - Include original N50 tags.
   * <code>-geojson</code> - Output raw N50 data in geojson format file.
-  * <code>-stream</code> - Load elevation and turn streams to get correct downhill direction of stream (time consuming).
-  * <code>-ele</code> - Load elevation of lakes (time consuming).
+  * <code>-nostream</code> - Do not load elevation and turn streams to get correct downhill direction of streams.
+  * <code>-noele</code> - Do not load elevation of lakes.
   * <code>-noname</code> - Do not include SSR names for lakes, islands etc.
   * <code>-nonve</code> - Do not load lake information from NVE.
   * <code>-nonode</code> - Do not identify intersections between lines (time consuming for large municipalities).
+  * <code>-nosimplify</code> - Do not simplify geometry lines before output.
 
 The *utm.py* file should be located in the same folder as *n50osm.py* when running the program.
 
@@ -43,10 +44,10 @@ Paramters:
 * The *n50osm.py* program loads data from Kartverket N50, combines it with other data sources and produces an OSM file for import.
   * The N50 topology data is loaded from Kartverket. OSM relations are automatically created.
   * Lake data is loaded from NVE.
-  * Elevation data is loaded from a Kartverket api (not from the elevation DEM or TIFF files).
+  * Elevation data is loaded from Kartverket DTM api (not from the elevation DEM or TIFF files).
   * Place names are loaded from the [SSR import files](https://wiki.openstreetmap.org/wiki/No:Import_av_stedsnavn_fra_SSR2) created by the OSM community.
   * Buildings are tagged according to the building type CSV file on GitHub.
-  * The program has an exponential complexity. Most municipalities will run in a few seconds, large municipalities will run in minutes (for example Vinje in 30 mins), while the largest municipalities might require several hours to complete. The elevation api is slow, currently running at 3 elevations per second (per stream and lake).
+  * The program has an exponential complexity. Most municipalities will run in a few seconds, large municipalities will run in minutes (for example Vinje in 30 mins), while the largest municipalities might require several hours to complete.
    * Only one file for the entire municipality is produced. Please split into suitable sections when importing, either manually, or using *n50merge.py* with the <code>-split</code> option.
   * A few fixme tags are produced for streams which need manual inspection regarding downhill direction, as well as for place names whenever SSR contains more than one approved name for an object.
 * The *n50merge.py* program merges the N50 import file with existing OSM data which it loads from Overpass.
@@ -64,8 +65,9 @@ Paramters:
 ### Changelog
 
 n50osm.py
-* 0.8: Alternative SSR source; update riverbank tagging; fix island identification; various improvements
-* 0.7: Update API URLs; fix conflicting lake names SSR vs. NVE  
+* 1.0: Big speed improvement (elevations); stream network analysis to confirm more stream directions; most script options are now default.
+* 0.8: Alternative SSR source; update riverbank tagging; fix island identification; various improvements.
+* 0.7: Update API URLs; fix conflicting lake names SSR vs. NVE.
 * 0.6. Building=* tags only on polygons, not nodes.
 * 0.5: New API for elevations.
 * 0.4: Code converted to Python 3.
