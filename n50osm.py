@@ -16,7 +16,7 @@ from xml.etree import ElementTree as ET
 import utm
 
 
-version = "1.0.1"
+version = "1.0.2"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -1017,13 +1017,10 @@ def split_polygons():
 
 							segment['used'] += 1
 
-							# Check if feature polygon and segment line have same direction
+							# Check if feature polygon and segment line have correct direction
 							node1 = patch.index(segment['coordinates'][0])
 							node2 = patch.index(segment['coordinates'][1])
-							same_direction = (node1 + 1 == node2 or patch[0] == patch[-1] and node1 == len(patch) - 2 and node2 == 0)
-
-							# Reverse to get aligned. Opposite direction for coastline.
-							if feature['object'] == "Havflate" and same_direction or not feature['object'] == "Havflate" and not same_direction:   
+							if node1 + 1 == node2 or patch[0] == patch[-1] and node1 == len(patch) - 2 and node2 == 0:
 								segment['coordinates'].reverse()
 								segment['extras']['reversert'] = "yes"
 
