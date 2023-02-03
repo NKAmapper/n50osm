@@ -512,11 +512,11 @@ def create_point (node, tags, gml_id = None):
 		features.append(entry)
 
 
+def parse_coordinates(coord_text, utm_zone: int):
+	"""Get list of coordinates from GML
 
-# Get list of coordinates from GML
-# Each point is a tuple of (lon, lat), corresponding to GeoJSON format x,y
-
-def parse_coordinates (coord_text):
+	Each point is a tuple of (lon, lat), corresponding to GeoJSON format x,y
+	"""
 
 	global gml_id
 
@@ -526,7 +526,7 @@ def parse_coordinates (coord_text):
 	for i in range(0, len(split_coord) - 1, 2):
 		x = float(split_coord[i])
 		y = float(split_coord[i+1])
-		[lat, lon] = utm.UtmToLatLon (x, y, 33, "N")
+		[lat, lon] = utm.UtmToLatLon (x, y, utm_zone, "N")
 		node = ( round(lon, coordinate_decimals), round(lat, coordinate_decimals) )
 		parse_count += 1
 		if not coordinates or node != coordinates[-1] or json_output:
@@ -681,10 +681,8 @@ def get_property(top,  ns_app):
 	return properties
 
 
-
-# Load N50 topo data from Kartverket
-
-def load_n50_data (municipality_id, municipality_name, data_category):
+def load_n50_data(municipality_id, municipality_name, data_category, utm_zone: int):
+	"""Load N50 topo data from Kartverket"""
 
 	global gml_id
 
@@ -699,7 +697,7 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 
 	# Load latest N50 file for municipality from Kartverket
 
-	filename = "Basisdata_%s_%s_25833_N50Kartdata_GML" % (municipality_id, municipality_name)
+	filename = f"Basisdata_{municipality_id}_{municipality_name}_258{utm_zone}_N50Kartdata_GML"
 	filename = filename.replace("Æ","E").replace("Ø","O").replace("Å","A")\
 						.replace("æ","e").replace("ø","o").replace("å","a").replace(" ", "_")
 	message ("\tLoading file '%s'\n" % filename)
@@ -775,16 +773,16 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 					# point
 					if geo.tag == "{%s}Point" % ns_gml:
 						entry['type'] = "Point"
-						entry['coordinates'] = parse_coordinates(geo[0].text)[0]
+						entry['coordinates'] = parse_coordinates(geo[0].text, utm_zone)[0]
 
 					# LineString
 					elif geo.tag == "{%s}LineString" % ns_gml:
 						if geometry_type != "geometri":
 							entry['type'] = "LineString"
-							entry['coordinates'] = parse_coordinates(geo[0].text)
+							entry['coordinates'] = parse_coordinates(geo[0].text, utm_zone)
 						else:
 							entry['type'] = "Point"
-							entry['coordinates'] = parse_coordinates(geo[0].text)[0]
+							entry['coordinates'] = parse_coordinates(geo[0].text, utm_zone)[0]
 
 					# Curve, stored as LineString
 					elif geo.tag == "{%s}Curve" % ns_gml:
@@ -792,7 +790,7 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 						entry['extras']['type2'] = "curve"
 						entry['coordinates'] = []
 						for patch in geo[0]:
-							coordinates =  parse_coordinates(patch[0].text)
+							coordinates =  parse_coordinates(patch[0].text, utm_zone)
 							if entry['coordinates']:
 								entry['coordinates'] + coordinates[1:]
 							else:
@@ -808,11 +806,11 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 
 							if patch[0].tag == "{%s}Ring" % ns_gml:
 								if patch[0][0][0].tag == "{%s}LineString" % ns_gml:
-									coordinates = parse_coordinates(patch[0][0][0][0].text)  # Ring->LineString
+									coordinates = parse_coordinates(patch[0][0][0][0].text, utm_zone)  # Ring->LineString
 								else:
-									coordinates = parse_coordinates(patch[0][0][0][0][0][0].text)  # Ring->Curve->LineStringSegment
+									coordinates = parse_coordinates(patch[0][0][0][0][0][0].text, utm_zone)  # Ring->Curve->LineStringSegment
 							else:
-								coordinates = parse_coordinates(patch[0][0].text)  # LinearRing
+								coordinates = parse_coordinates(patch[0][0].text, utm_zone)  # LinearRing
 
 							if len(coordinates) > 1:
 								if len(coordinates) < 3:
@@ -2245,7 +2243,7 @@ if __name__ == '__main__':
 	if data_category == "BygningerOgAnlegg":
 		load_building_types()
 
-	load_n50_data(municipality_id, municipality_name, data_category)
+	load_n50_data(municipality_id, municipality_name, data_category, utm_zone=33)
 
 	if json_output:
 		save_geojson(output_filename + ".geojson")
