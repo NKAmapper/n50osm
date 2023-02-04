@@ -9,22 +9,18 @@ Paramters:
 * *municipality* - Name of municipality or 4 digit municipality number.
 * *category* - One of the following data categories in N50:
   * <code>AdministrativeOmrader</code> - Municipal boundaries. Rough boundaries, so please do not import into OSM.
-  * <code>Arealdekke</code> - This is the topo data used in the N50 import.
+  * <code>Arealdekke</code> - This is the topo data used in the N50 import (default if no category given).
   * <code>BygningerOgAnlegg</code> - Useful additional objects such as quay, pier, dam and various public services.
   * <code>Hoyde</code> - Peaks/hills.
   * <code>Restriksjonsomrader</code> - Military areas.
   * <code>Samferdsel</code> - Tracks and paths (rough topology).
   * <code>Stedsnavn</code> - Place names (no OSM tagging). Please use the [SSR import](https://wiki.openstreetmap.org/wiki/No:Import_av_stedsnavn_fra_SSR2) instead.
 * *options*:
+  * <code>-nosimplify</code> - Do not simplify geometry lines before output.
+  * <code>-short</code> - Keep short segments <2 meters.
   * <code>-debug</code> - Include extra tags and lines for debugging, including original N50 tags.
   * <code>-tag</code> - Include original N50 tags.
   * <code>-geojson</code> - Output raw N50 data in geojson format file.
-  * <code>-nostream</code> - Do not load elevation and turn streams to get correct downhill direction of streams.
-  * <code>-noele</code> - Do not load elevation of lakes.
-  * <code>-noname</code> - Do not include SSR names for lakes, islands etc.
-  * <code>-nonve</code> - Do not load lake information from NVE.
-  * <code>-nonode</code> - Do not identify intersections between lines (time consuming for large municipalities).
-  * <code>-nosimplify</code> - Do not simplify geometry lines before output.
 
 The *utm.py* file should be located in the same folder as *n50osm.py* when running the program.
 
@@ -65,6 +61,7 @@ Paramters:
 ### Changelog
 
 n50osm.py
+* 1.1: Simplified program arguments; use best UTM zone; remove short segments <2m; include quays and breakwaters; include nodes for alternative SSR names.
 * 1.0: Big speed improvement (elevations); stream network analysis to confirm more stream directions; most script options are now default.
 * 0.8: Alternative SSR source; update riverbank tagging; fix island identification; various improvements.
 * 0.7: Update API URLs; fix conflicting lake names SSR vs. NVE.
