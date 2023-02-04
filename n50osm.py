@@ -16,21 +16,28 @@ from xml.etree import ElementTree as ET
 import utm
 
 
-version = "1.0.2"
+version = "1.1.0"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
 ssr_folder = "~/Jottacloud/osm/stedsnavn/"  # Folder containing import SSR files (default folder tried first)
 
-coordinate_decimals = 7
-
+coordinate_decimals = 7	# Decimals in coordinate output
 island_size = 100000  	# Minimum square meters for place=island vs place=islet
-
 lake_ele_size = 2000  	# Minimum square meters for fetching elevation
-
 max_stream_error = 1.0 	# Minimum meters of elevation difference for turning direction of streams
-
 simplify_factor = 0.2   # Threshold for simplification
+
+debug =       False  # Include debug tags and unused segments
+n50_tags =    False  # Include property tags from N50 in output
+json_output = False  # Output complete and unprocessed geometry in geojson format
+turn_stream = True   # Load elevation data to check direction of streams
+lake_ele =    True   # Load elevation for lakes
+no_name =     False  # Do not load SSR place names
+no_nve =      False  # Do not load NVE lake data
+no_node =     False  # Do not merge common nodes at intersections
+simplify =    True   # Simplify geometry lines
+short =       True   # Remove short segments (<2 m)
 
 data_categories = ["AdministrativeOmrader", "Arealdekke", "BygningerOgAnlegg", "Hoyde", "Restriksjonsomrader", "Samferdsel", "Stedsnavn"]
 
@@ -389,6 +396,18 @@ def inside_multipolygon (point, multipolygon):
 
 
 
+# Compute approximation of distance between two coordinates, (lon,lat), in meters.
+# Works for short distances.
+
+def distance (point1, point2):
+
+	lon1, lat1, lon2, lat2 = map(math.radians, [point1[0], point1[1], point2[0], point2[1]])
+	x = (lon2 - lon1) * math.cos( 0.5*(lat2+lat1) )
+	y = lat2 - lat1
+	return 6371000.0 * math.sqrt( x*x + y*y )  # Metres
+
+
+
 # Compute closest distance from point p3 to line segment [s1, s2].
 # Works for short distances.
 
@@ -489,26 +508,28 @@ def get_bbox(coordinates, perimeter):
 
 # Create feature with one point
 
-def create_point (node, tags, gml_id = None):
+def create_point (node, tags, gml_id = None, object_type = "Debug"):
 
-	if debug:
-		if isinstance(tags, str):
-			tags = {'note': tags}
-		entry = {
-			'object': 'Debug',
-			'type': 'Point',
-			'coordinates': node,
-			'members': [],
-			'tags': {},
-			'extras': {'objekttype': 'Debug'}
-		}
-		if isinstance(tags, str):
-			entry['extras']['note'] = tags
-		else:
-			entry['extras'].update(tags)
-		if gml_id:
-			entry['gml_id'] = gml_id
+	entry = {
+		'object': object_type,
+		'type': 'Point',
+		'coordinates': node,
+		'members': [],
+		'tags': {},
+		'extras': {'objekttype': object_type}
+	}
 
+	if isinstance(tags, str):
+		entry['extras']['note'] = tags
+	elif object_type == "Debug":
+		entry['extras'].update(tags)
+	else:
+		entry['tags'].update(tags)
+
+	if gml_id:
+		entry['gml_id'] = gml_id
+
+	if debug or object_type != "Debug":
 		features.append(entry)
 
 
@@ -526,7 +547,7 @@ def parse_coordinates (coord_text):
 	for i in range(0, len(split_coord) - 1, 2):
 		x = float(split_coord[i])
 		y = float(split_coord[i+1])
-		[lat, lon] = utm.UtmToLatLon (x, y, 33, "N")
+		[lat, lon] = utm.UtmToLatLon (x, y, utm_zone, "N")
 		node = ( round(lon, coordinate_decimals), round(lat, coordinate_decimals) )
 		parse_count += 1
 		if not coordinates or node != coordinates[-1] or json_output:
@@ -607,7 +628,11 @@ def load_building_types():
 
 	url = "https://raw.githubusercontent.com/NKAmapper/building2osm/main/building_types.csv"
 	request = urllib.request.Request(url, headers=header)
-	file = urllib.request.urlopen(request)
+	try:
+		file = urllib.request.urlopen(request)
+	except urllib.error.HTTPError as err:
+		message("\t\t*** %s\n" % err)
+		return
 
 	building_csv = csv.DictReader(TextIOWrapper(file, "utf-8"), fieldnames=["id", "name", "building_tag", "extra_tag"], delimiter=";")
 	next(building_csv)
@@ -638,6 +663,14 @@ def simple_length (coord):
 		length += (coord[i+1][0] - coord[i][0])**2 + ((coord[i+1][1] - coord[i][1])**2) * 0.5
 
 	return length
+
+
+
+# Clean Norwegian characters from filename
+
+def clean_filename(filename):
+
+	return filename.replace("Æ","E").replace("Ø","O").replace("Å","A").replace("æ","e").replace("ø","o").replace("å","a").replace(" ", "_")
 
 
 
@@ -682,11 +715,103 @@ def get_property(top,  ns_app):
 
 
 
+# Get feature data from XML
+
+def parse_feature(feature):
+
+	geometry_type = None
+	properties = {}  # Attributes provided from GML
+
+	for app in feature[0]:
+
+		# Get app properties/attributes
+
+		tag = app.tag[ len(ns_app)+2 : ]
+		if tag in ['posisjon', 'grense', 'område', 'senterlinje', 'geometri']:
+			geometry_type = tag
+		else:
+			properties.update(get_property(app, ns_app))
+
+		# Get geometry/coordinates
+
+		for geo in app:
+
+			# Point
+			if geo.tag == "{%s}Point" % ns_gml:
+				coord_type = "Point"
+				coordinates = parse_coordinates(geo[0].text)[0]
+
+			# LineString
+			elif geo.tag == "{%s}LineString" % ns_gml:
+				if geometry_type != "geometri":
+					coord_type = "LineString"
+					coordinates = parse_coordinates(geo[0].text)
+				else:
+					coord_type = "Point"
+					coordinates = parse_coordinates(geo[0].text)[0]
+
+			# Curve, stored as LineString
+			elif geo.tag == "{%s}Curve" % ns_gml:
+				coord_type = "LineString"
+				coordinates = []
+				for patch in geo[0]:
+					line = parse_coordinates(patch[0].text)
+					if coordinates:
+						coordinates += line[1:]
+					else:
+						coordinates = line  # First patch
+
+			# (Multi)Polygon
+			elif geo.tag == "{%s}Surface" % ns_gml:
+				coord_type = "Polygon"
+				coordinates = []  # List of patches
+
+				for patch in geo[0][0]:
+					role = patch.tag[ len(ns_gml)+2 : ]
+
+					if patch[0].tag == "{%s}Ring" % ns_gml:
+						if patch[0][0][0].tag == "{%s}LineString" % ns_gml:
+							polygon = parse_coordinates(patch[0][0][0][0].text)  # Ring->LineString
+						else:
+							polygon = parse_coordinates(patch[0][0][0][0][0][0].text)  # Ring->Curve->LineStringSegment
+					else:
+						polygon = parse_coordinates(patch[0][0].text)  # LinearRing
+
+					if len(polygon) > 1:
+						if len(polygon) < 3:
+							message("\t*** POLYGON PATCH TOO SHORT: %s  %s\n" % (role, gml_id))
+						elif polygon[0] != polygon[-1]:
+							message("\t*** POLYGON PATCH NOT CLOSED: %s  %s\n" % (role, gml_id))
+
+						if json_output:
+							coordinates.append( polygon )
+						else:
+							# Check for intersecting/touching polygon
+							coordinates.extend( split_patch( polygon ) )
+					else:
+						message("\t*** EMPTY POLYGON PATCH: %s  %s\n" % (role, gml_id))
+
+			elif ns_gml in geo.tag:
+				message ("\t*** UNKNOWN GEOMETRY: %s\n" % geo.tag)
+
+	return geometry_type, coord_type, properties, coordinates	
+
+
+
 # Load N50 topo data from Kartverket
 
 def load_n50_data (municipality_id, municipality_name, data_category):
 
-	global gml_id
+	global utm_zone, gml_id, ns_gml, ns_app, ns
+
+	# XML name space
+	ns_gml = 'http://www.opengis.net/gml/3.2'
+	ns_app = 'http://skjema.geonorge.no/SOSI/produktspesifikasjon/N50/20170401'
+
+	ns = {
+		'gml': ns_gml,
+		'app': ns_app
+	}
 
 	lap = time.time()
 
@@ -697,15 +822,26 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 	stream_count = 0
 	missing_tags = set()
 
-	# Load latest N50 file for municipality from Kartverket
+	# Load latest N50 file for municipality from Kartverket, using best UTM zone available
 
-	filename = "Basisdata_%s_%s_25833_N50Kartdata_GML" % (municipality_id, municipality_name)
-	filename = filename.replace("Æ","E").replace("Ø","O").replace("Å","A")\
-						.replace("æ","e").replace("ø","o").replace("å","a").replace(" ", "_")
+	n50_url = "https://nedlasting.geonorge.no/geonorge/Basisdata/N50Kartdata/GML/"
+	
+	for utm_zone in [32, 35, 33]:
+		filename = "Basisdata_%s_%s_258%i_N50Kartdata_GML" % (municipality_id, municipality_name, utm_zone)
+		filename = clean_filename(filename)
+		request = urllib.request.Request(n50_url + filename + ".zip", headers=header)
+		try:
+			file_in = urllib.request.urlopen(request)
+			error = None
+			break
+		except urllib.error.HTTPError as err:
+			error = err
+
+	if error is not None:
+		sys.exit("\n\t*** %s\n\n" % err)
+
 	message ("\tLoading file '%s'\n" % filename)
 
-	request = urllib.request.Request("https://nedlasting.geonorge.no/geonorge/Basisdata/N50Kartdata/GML/" + filename + ".zip", headers=header)
-	file_in = urllib.request.urlopen(request)
 	zip_file = zipfile.ZipFile(BytesIO(file_in.read()))
 
 #	for file_entry in zip_file.namelist():
@@ -716,16 +852,7 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 
 	tree = ET.parse(file)
 	file.close()
-	file_in.close()
 	root = tree.getroot()
-
-	ns_gml = 'http://www.opengis.net/gml/3.2'
-	ns_app = 'http://skjema.geonorge.no/SOSI/produktspesifikasjon/N50/20170401'
-
-	ns = {
-		'gml': ns_gml,
-		'app': ns_app
-	}
 
 	# Loop features, parse and load into data structure and tag
 
@@ -733,8 +860,7 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 
 	for feature in root:
 		if "featureMember" in feature.tag:
-			feature_type = feature[0].tag[ len(ns_app)+2 : ]	
-			geometry_type = None
+			feature_type = feature[0].tag[ len(ns_app)+2 : ]
 			gml_id = feature[0].attrib["{%s}id" % ns_gml]
 
 			if feature_type not in object_count:
@@ -744,92 +870,20 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 			if feature_type in avoid_objects and not json_output:
 				continue
 
+			geometry_type, coordinate_type, properties, coordinates = parse_feature(feature)
+
 			entry = {
 				'object': feature_type,
-				'type': None,
+				'type': coordinate_type,
 				'gml_id': gml_id,
-				'coordinates': [],
+				'coordinates': coordinates,
 				'members': [],
 				'tags': {},
 				'extras': {
-					'objekttype': feature_type
+					'objekttype': feature_type,
+					'geometri': geometry_type
 				}
 			}
-
-			properties = {}  # Attributes provided from GML
-
-			for app in feature[0]:
-
-				# Get app properties/attributes
-
-				tag = app.tag[ len(ns_app)+2 : ]
-				if tag in ['posisjon', 'grense', 'område', 'senterlinje', 'geometri']:
-					geometry_type = tag
-					entry['extras']['geometri'] = geometry_type
-				else:
-					properties.update(get_property(app, ns_app))
-
-				# Get geometry/coordinates
-
-				for geo in app:
-					# point
-					if geo.tag == "{%s}Point" % ns_gml:
-						entry['type'] = "Point"
-						entry['coordinates'] = parse_coordinates(geo[0].text)[0]
-
-					# LineString
-					elif geo.tag == "{%s}LineString" % ns_gml:
-						if geometry_type != "geometri":
-							entry['type'] = "LineString"
-							entry['coordinates'] = parse_coordinates(geo[0].text)
-						else:
-							entry['type'] = "Point"
-							entry['coordinates'] = parse_coordinates(geo[0].text)[0]
-
-					# Curve, stored as LineString
-					elif geo.tag == "{%s}Curve" % ns_gml:
-						entry['type'] = "LineString"
-						entry['extras']['type2'] = "curve"
-						entry['coordinates'] = []
-						for patch in geo[0]:
-							coordinates =  parse_coordinates(patch[0].text)
-							if entry['coordinates']:
-								entry['coordinates'] + coordinates[1:]
-							else:
-								entry['coordinates'] = coordinates  # First patch
-			
-					# (Multi)Polygon
-					elif geo.tag == "{%s}Surface" % ns_gml:
-						entry['type'] = "Polygon"
-						entry['coordinates'] = []  # List of patches
-
-						for patch in geo[0][0]:
-							role = patch.tag[ len(ns_gml)+2 : ]
-
-							if patch[0].tag == "{%s}Ring" % ns_gml:
-								if patch[0][0][0].tag == "{%s}LineString" % ns_gml:
-									coordinates = parse_coordinates(patch[0][0][0][0].text)  # Ring->LineString
-								else:
-									coordinates = parse_coordinates(patch[0][0][0][0][0][0].text)  # Ring->Curve->LineStringSegment
-							else:
-								coordinates = parse_coordinates(patch[0][0].text)  # LinearRing
-
-							if len(coordinates) > 1:
-								if len(coordinates) < 3:
-									message("\t*** POLYGON PATCH TOO SHORT: %s  %s\n" % (role, gml_id))
-								elif coordinates[0] != coordinates[-1]:
-									message("\t*** POLYGON PATCH NOT CLOSED: %s  %s\n" % (role, gml_id))
-
-								if json_output:
-									entry['coordinates'].append( coordinates )
-								else:
-									# Check for intersecting/touching polygon
-									entry['coordinates'].extend( split_patch( coordinates ) )
-							else:
-								message("\t*** EMPTY POLYGON PATCH: %s  %s\n" % (role, gml_id))
-
-					elif ns_gml in geo.tag:
-						message ("\t*** UNKNOWN GEOMETRY: %s\n" % geo.tag)
 
 			# Store tags
 
@@ -875,6 +929,11 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 			if feature_type == "ElvBekk":
 				stream_count += 1			
 
+	if data_category == "Arealdekke":
+		load_quay_breakwater(zip_file, filename)
+
+	file_in.close()
+
 	message("\tObjects loaded:\n")
 	for object_type in sorted(object_count):
 		if object_type not in auxiliary_objects:
@@ -889,6 +948,39 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 	message ("\tUpdate dates: %s - %s\n" % (update_date[0], update_date[1]))
 	message ("\t%i feature objects, %i segments\n" % (len(features), len(segments)))
 	message ("\tRun time %s\n" % (timeformat(time.time() - lap)))
+
+
+
+# Load separate file for quays and breakwaters while zip folder is still open
+
+def load_quay_breakwater(zip_file, filename):
+
+	message ("\tLoading quays and breakwaters ... ")
+
+	filename2 = filename.replace("Kartdata", "BygningerOgAnlegg")
+	file = zip_file.open(filename2 + ".gml")
+
+	tree = ET.parse(file)
+	file.close()
+	root = tree.getroot()
+	count_load = 0
+	count_merged = 0
+
+	for feature in root:
+		if "featureMember" in feature.tag:
+			feature_type = feature[0].tag[ len(ns_app)+2 : ]
+
+			if feature_type in ["KaiBrygge", "Molo"]:
+				geometry_type, coordinate_type, properties, coordinates = parse_feature(feature)
+				coordinate_set = set(coordinates)
+				count_load += 1
+
+				for segment in segments:
+					if len(coordinate_set.intersection(segment['coordinates'])) > 1:
+						segment['tags'].update(osm_tags[ feature_type ])
+						count_merged += 1
+
+	message ("%i loaded, merged in %i segments\n" % (count_load, count_merged))
 
 
 
@@ -913,7 +1005,7 @@ def create_border_segments(patch, members, gml_id, match):
 			elif abs(n1 - n0) == len(patch) - 2:
 				connection[ len(patch) - 2 ] = True
 			else:
-				message ("\t*** MISSING BORDER SEGMENT: Node %i - %i of %i/%i nodes %s\n" % (n0, n1, len(patch), match, gml_id))
+				message ("\t*** MISSING BORDER SEGMENT: %i nodes between %s and %s %s\n" % (abs(n1 - n0), patch[n0], patch[n1], gml_id))
 
 			n0 = n1
 
@@ -935,7 +1027,7 @@ def create_border_segments(patch, members, gml_id, match):
 				'type': 'LineString',
 				'coordinates': patch[ start_index : end_index + 1],
 				'members': [],
-				'tags': { },
+				'tags': { "FIXME": "Merge" },
 				'extras': {
 					'objekttype': 'KantUtsnitt'
 				},
@@ -948,15 +1040,6 @@ def create_border_segments(patch, members, gml_id, match):
 
 
 
-# Function for sorting member segments of polygon relation
-# Index 1 used to avoid equal 0/-1 positions
-
-def segment_position(segment_index, patch):
-
-	return patch.index(segments[segment_index]['coordinates'][1])
-
-
-
 # Fix data structure:
 # - Split polygons into segments
 # - Order direction of ways for coastline, lakes, rivers and islands
@@ -964,6 +1047,17 @@ def segment_position(segment_index, patch):
 # - Crate missing segments along municipality border
 
 def split_polygons():
+
+	# Function for sorting member segments of polygon relation
+	# Index 1 used to avoid equal 0/-1 positions
+
+	def segment_position(segment_index, patch):
+
+		if len(segments[segment_index]['coordinates']) == 2:
+			return min(patch.index(segments[segment_index]['coordinates'][0]), patch.index(segments[segment_index]['coordinates'][1]))
+		else:
+			return patch.index(segments[segment_index]['coordinates'][1])
+
 
 	message ("Decompose polygons into segments...\n")
 
@@ -976,10 +1070,14 @@ def split_polygons():
 
 	lap = time.time()
 	split_count = 0
+	count = sum([feature['type'] == "Polygon" for feature in features])
 
 	for feature in features:
 
 		if feature['type'] == "Polygon":
+			if count % 100 == 0:
+				message ("\r\t%i " % count)
+			count -= 1
 			matching_polygon = []
 
 			for patch in feature['coordinates']:
@@ -1050,12 +1148,197 @@ def split_polygons():
 				feature['type'] = "LineString"
 				feature['coordinates'] = feature['coordinates'][0]
 
-	message ("\t%i splits\n" % split_count)
+	message ("\r\t%i splits\n" % split_count)
 	message ("\tRun time %s\n" % (timeformat(time.time() - lap)))
 
 
 
-# Fix coastline
+# Remove segments shorter than 2 meters.
+# Also remove any resulting duplicate segments and empty features.
+
+def remove_short_segments():
+
+	# Sorting function for short segments. Priority to FiktivDelelinje.
+
+	def short_sorting(segment):
+
+		value = len(junctions[ segment['coordinates'][0] ]) + len(junctions[ segment['coordinates'][-1] ])
+		if ("FiktivDelelinje" in junctions[ segment['coordinates'][0] ]
+				or "FiktivDelelinje" in junctions[ segment['coordinates'][-1] ]):
+			return - value + 100
+		else:
+			return - value
+
+
+	# Swap coordinates according to swap_nodes dict.
+	# Remove any double occurences of same node.
+
+	def swap_coordinates(coordinates):
+
+		ring = coordinates[0] == coordinates[-1]
+		new_coordinates = []
+		last_node = None
+
+		for i, node in enumerate(coordinates):
+			new_node = node
+			if node in swap_nodes:
+				new_node = swap_nodes[ node ]
+			if new_node is not None and new_node != last_node:
+				new_coordinates.append(new_node)
+				last_node = new_node
+
+		if new_coordinates:
+			if len(new_coordinates) == 1:
+				new_coordinates = []
+			elif ring and new_coordinates[0] != new_coordinates[-1]:
+				new_coordinates.append(new_coordinates[0])
+
+		return new_coordinates
+
+
+	# Add segments for given junction to affected_segments list
+
+	def add_segment_list(start_node, end_node):
+
+		for segment in junctions[ start_node ] + junctions[ end_node ]:
+			if segment not in affected_segments:
+				affected_segments.append(segment)
+
+
+	# Build dict of all junctions between segments + list of short segments
+
+	message ("Removing short segments ...\n")
+
+	lap = time.time()
+	junctions = {}
+	short_segments = []
+
+	for segment in segments:
+		for j in [0, -1]:
+			if segment['coordinates'][j] not in junctions:
+				junctions[ segment['coordinates'][j] ] = []
+			if segment not in junctions[ segment['coordinates'][j] ]:
+				junctions[ segment['coordinates'][j] ].append(segment)
+		if len(segment['coordinates']) <= 3 and distance(segment['coordinates'][0], segment['coordinates'][-1]) <= 2:
+			short_segments.append(segment)
+
+	# Discover short segments which may be concatenated to longer way.
+	# Store node mapping in swap_nodes dict.
+
+	short_segments.sort(key=short_sorting, reverse=True)
+	swap_nodes = {}
+	affected_segments = []
+	count_remove = 0
+
+	for segment in short_segments:
+		for j in [0, -1]:
+
+			node1 = segment['coordinates'][j]  # "From" node
+			junction_types = [seg['object'] for seg in junctions[ node1 ]]
+
+			if (len(junctions[ node1 ]) > 1  # No edge cases
+					and ("FiktivDelelinje" not in junction_types  # No wood grid
+						or segment['object'] == "FiktivDelelinje" and junction_types.count("FiktivDelelinje") == 1)):
+
+				node2 = segment['coordinates'][ abs(j) - 1 ]  # "To" node. Flips between 0 and -1.
+
+				# Avoid nodes already swapped elsewhere and avoid circular swaps
+				if (not(node1 in swap_nodes and swap_nodes[ node1 ] != node2)
+						and not(node2 in swap_nodes and swap_nodes[ node2 ] == node1)):
+
+					if node2 in swap_nodes:
+						node2 = swap_nodes[ node2 ]
+					for node in swap_nodes:
+						if swap_nodes[ node ] == node1:
+							swap_nodes[ node ] = node2
+					swap_nodes[ node1 ] = node2
+
+					if len(segment['coordinates']) == 3:
+						swap_nodes[ segment['coordinates'][1] ] = None  # Remove middle node
+
+					add_segment_list(node1, node2)
+					segments.remove(segment)
+					count_remove +=1
+					break
+
+	for segment in affected_segments[:]:
+		if segment not in segments:
+			affected_segments.remove(segment)
+
+	# Swap nodes in affected segments according to swap_node dict
+
+	for segment in affected_segments[:]:  #segments[:]:
+		new_coordinates = swap_coordinates(segment['coordinates'])
+		if new_coordinates != segment['coordinates']:
+			segment['coordinates'] = new_coordinates
+			if not new_coordinates:
+				segments.remove(segment)
+				affected_segments.remove(segment)
+
+	# Simplify affected segments of 3 nodes.
+	# After swapping nodes, 3 node segments may become straight lines which overlap with other segments.
+
+	swap_target = set(swap_nodes.values())
+	swap_set = set(swap_nodes.keys())
+
+	for segment in segments[:]:
+		if len(segment['coordinates']) == 3:
+			if segment['coordinates'][0] == segment['coordinates'][-1]:
+#				message ("3 delete: %s %s\n" % (segment['coordinates'][0], segment['tags']))
+				swap_nodes[ segment['coordinates'][1] ] = None
+				add_segment_list(segment['coordinates'][0], segment['coordinates'][-1])
+				segments.remove(segment)
+				if segment in affected_segments:
+					affected_segments.remove(segment)
+
+			elif swap_target.intersection(segment['coordinates']) or swap_set.intersection(segment['coordinates']):
+				simpel = simplify_line(segment['coordinates'], simplify_factor)
+				if simpel != segment['coordinates']:
+					swap_nodes[ segment['coordinates'][1] ] = None
+					segment['coordinates'] = simpel
+					add_segment_list(segment['coordinates'][0], segment['coordinates'][-1])					
+
+	# Remove any completely overlapping ways.
+	# Note: Costly for large municipalities.
+
+	short_segments = [segment for segment in affected_segments if len(segment['coordinates']) == 2]
+
+	for segment1 in short_segments:
+		for segment2 in short_segments:
+			if (set(segment1['coordinates']) == set(segment2['coordinates']) and segment2 in segments and segment1 != segment2):
+				segments.remove(segment2)
+#				message ("Duplikat  ")
+				break
+
+	# Update all affected features
+
+	swap_set = set(swap_nodes.keys())
+
+	for feature in features[:]:
+		if feature['type'] == "Polygon":
+			new_polygon = []
+			for patch in feature['coordinates'][:]:
+				new_patch = [ patch ]
+				if swap_set.intersection(patch):
+					new_patch = [ swap_coordinates(patch) ]
+					if new_patch[0] != patch:
+						new_patch = split_patch(new_patch[0])
+#						if len(new_patch) > 1:
+#							message ("Polygon split  ")
+				if new_patch[0]:
+					new_polygon.extend(new_patch)
+			if new_polygon and new_polygon != feature['coordinates']:
+				feature['coordinates'] = new_polygon
+			elif not new_polygon:
+#				message ("Empty polygon  ")
+				features.remove(feature)
+
+	message ("\r\tRemoved %i short segments\n" % count_remove)
+	message ("\tRun time %s\n" % (timeformat(time.time() - lap)))
+
+
+
+# Identify islands and add island tagging.
 
 def find_islands():
 
@@ -1274,7 +1557,8 @@ def match_nodes():
 		# Create bbox for segments and line features + create temporary list of LineString features
 
 		for segment in segments:
-			[ segment['min_bbox'], segment['max_bbox'] ] = get_bbox(segment['coordinates'], 0)
+			if segment['used'] > 0:
+				[ segment['min_bbox'], segment['max_bbox'] ] = get_bbox(segment['coordinates'], 0)
 		
 		# Loop streams to identify intersections with segments
 
@@ -1301,6 +1585,7 @@ def match_nodes():
 								if feature['coordinates'][ index1 - 1] not in intersections and \
 										feature['coordinates'][ index1 + 1] not in intersections:
 									feature['coordinates'].pop(index1)
+									delete_count += 1
 								else:
 									lon, lat = node
 									offset = 10 ** (- coordinate_decimals + 1)  # Last lat/lon decimal digit
@@ -1311,7 +1596,9 @@ def match_nodes():
 
 								if index2 not in [0, len(segment['coordinates']) - 1]:
 									if segment['coordinates'][ index2 - 1] not in intersections and \
-											segment['coordinates'][ index2 + 1] not in intersections:
+											segment['coordinates'][ index2 + 1] not in intersections and \
+											line_distance(segment['coordinates'][ index2 - 1], segment['coordinates'][ index2 + 1], \
+															segment['coordinates'][ index2 ]) < simplify_factor:
 										segment['coordinates'].pop(index2)
 
 							# Else create new common node with "water" segments (or reuse existing common node)
@@ -1323,8 +1610,9 @@ def match_nodes():
 
 	for segment in segments:
 		if segment['used'] > 0 and segment['object'] == "FiktivDelelinje":
-			delete_count += len(segment['coordinates']) - 2
-			segment['coordinates'] = [ segment['coordinates'][0], segment['coordinates'][-1] ]
+			delete_count += len(segment['coordinates'])
+			segment['coordinates'] = simplify_line(segment['coordinates'], simplify_factor)  # Usually straight line (2 nodes)
+			delete_count -= len(segment['coordinates'])			
 
 	message ("\t%i common nodes, %i nodes removed from streams and auxiliary lines\n" % (len(nodes) - node_count, delete_count))
 	message ("\tRun time %s\n" % (timeformat(time.time() - lap)))
@@ -1357,7 +1645,13 @@ def get_elevation(input_nodes):
 		nodes_string = json.dumps(node_list[ i : i + 50 ]).replace(" ", "")
 		url = "https://ws.geonorge.no/hoydedata/v1/datakilder/dtm1/punkt?punkter=%s&geojson=false&koordsys=4258" % nodes_string
 		request = urllib.request.Request(url, headers=header)
-		file = urllib.request.urlopen(request)
+
+		try:
+			file = urllib.request.urlopen(request)
+		except urllib.error.HTTPError as err:
+			message("\r\t\t*** %s\n" % err)
+			return None
+
 		result = json.load(file)
 		file.close()
 
@@ -1377,6 +1671,8 @@ def get_elevation(input_nodes):
 	if count_missing > 0:
 		message ("\r\t%i elevations not found\n" % count_missing)
 
+	return True
+
 
 
 # Get correct direction for streams by checking start/end elevations.
@@ -1384,7 +1680,7 @@ def get_elevation(input_nodes):
 
 def fix_stream_direction():
 
-	# Recursive function which will traverse network of streams to verify 
+	# Recursive function which will traverse network of streams to verify direction.
 	# Should start from a stream segment with an already confirmed direction.
 	# Will traverse upwards until stream segment with confirmed direction is found, and will then align streams in between with same direction.
 
@@ -1442,7 +1738,7 @@ def fix_stream_direction():
 				return False
 
 
-	# Start with collect all stream junctions/end points.
+	# First coollect all stream junctions/end points.
 
 	lap = time.time()
 	message ("Load elevation data from Kartverket and reverse streams...\n")
@@ -1521,7 +1817,9 @@ def fix_stream_direction():
 
 	# Load elevations
 
-	get_elevation(list(ele_list))
+	result = get_elevation(list(ele_list))
+	if result is None:
+		return
 
 	# 1st pass: Confirm direction or reverse based on elevation difference
 
@@ -1551,13 +1849,6 @@ def fix_stream_direction():
 				end_junction = junctions[ feature['coordinates'][-1] ]['id'] 
 				traverse_streams(start_junction, stream, elevations[ feature['coordinates'][-1] ], [ end_junction ])
 
-	# 3rd pass: Traverse any remaining streams ending in coastline (they have known direction)
-	'''
-	for point in coastline_intersections:
-		for stream in junctions[ point ]['streams']:
-			if "decline" not in stream:
-				traverse_streams(junctions[ point ]['id'], stream, 0.0, [])
-	'''
 	# Finally, tag fixme for remaining streams which have undetermined direction
 
 	check_count = 0
@@ -1574,9 +1865,9 @@ def fix_stream_direction():
 			reverse_count += 1
 
 	duration = time.time() - lap
-	message ("\r\t%i streams reversed, %i streams remaining with unclear direction (%i%%)\n"
+	message ("\r\t%i streams reversed, %i streams remaining with undetermined direction (%i%%)\n"
 				% (reverse_count, check_count, 100 * check_count / stream_count))
-	message ("\tRun time %s, %i streams per second\n" % (timeformat(duration), stream_count / duration))
+	message ("\tRun time %s (%i streams per second)\n" % (timeformat(duration), stream_count / duration))
 
 
 
@@ -1651,8 +1942,20 @@ def get_ssr_name (feature, name_categories):
 				feature['tags']['FIXME'] = "Alternative names: " + ", ".join(alt_names)
 			name_count += 1
 
+		# Not able to determine only one name
 		else:
+			found_names.sort(key=lambda name: len(name['tags']['name']), reverse=True)  # Select longest name
+			feature['tags'].update(found_names[0]['tags'])
+			feature['extras']['ssr:type'] = feature['tags'].pop("ssr:type", None)		
 			feature['tags']['FIXME'] = "Consider names: " + ", ".join(alt_names)
+
+		# Create separate nodes for each alternative name
+		if "FIXME" in feature['tags']:
+			for place in found_names:
+				point = place['coordinate']
+				while point in nodes:
+					point = (point[0], point[1] + 0.001)
+				create_point(point, place['tags'], object_type = "Stedsnavn")
 
 		return found_names[0]['coordinate']
 
@@ -1718,7 +2021,12 @@ def get_place_names():
 		ssr_source = "obtitus"
 		url = "https://obtitus.github.io/ssr2_to_osm_data/data/%s/%s.osm" % (municipality_id, municipality_id)
 		request = urllib.request.Request(url, headers=header)
-		file = urllib.request.urlopen(request)
+
+		try:
+			file = urllib.request.urlopen(request)
+		except urllib.error.HTTPError as err:
+			message("\t\t*** %s\n" % err)
+			return
 
 		tree = ET.parse(file)
 		file.close()
@@ -1799,19 +2107,19 @@ def get_place_names():
 		get_elevation(ele_nodes)
 
 		for lake in lake_elevations:
-			ele = elevations[ lake['center'] ]
-			if ele is not None:
+			if lake['center'] in elevations and elevations[ lake['center'] ] is not None:
 				feature = lake['feature']
 				if "ele" not in feature['tags'] and float(feature['extras']['areal']) >= lake_ele_size:
-					feature['tags']['ele'] = str(int(max(ele, 0)))
-#				create_point(lake['center'], {'ele': '%.2f' % ele})  # Done in get_elevation 
+					feature['tags']['ele'] = str(int(max(elevations[ lake['center'] ], 0)))
 				lake_ele_count += 1
 
+	'''
 	# Create lake centroid nodes for debugging
 	for feature in features:
 		if feature['object'] in ["Innsjø", "InnsjøRegulert"]:
 			centroid = polygon_centroid(feature['coordinates'][0])
-#			create_point(centroid, "centroid", gml_id=feature['gml_id'])
+			create_point(centroid, "centroid", gml_id=feature['gml_id'])
+	'''
 
 	# Get glacier names
 	get_category_place_names(["SnøIsbre"], ["isbre", "fonn", "iskuppel"])
@@ -1858,7 +2166,13 @@ def get_nve_lakes():
 					% (municipality_id, nve_lake_count)
 
 		request = urllib.request.Request(url, headers=header)
-		file = urllib.request.urlopen(request)
+		try:
+			file = urllib.request.urlopen(request)
+		except urllib.error.HTTPError as err:
+			message("\t\t*** %s\n" % err)
+			more_lakes = False
+			continue
+
 		lake_data = json.load(file)
 		file.close()
 
@@ -1900,36 +2214,37 @@ def get_nve_lakes():
 
 
 
+# Simplify line, i.e. reduce nodes within epsilon distance.
+# Ramer-Douglas-Peucker method: https://en.wikipedia.org/wiki/Ramer–Douglas–Peucker_algorithm
+
+def simplify_line(line, epsilon):
+
+	dmax = 0.0
+	index = 0
+	for i in range(1, len(line) - 1):
+		d = line_distance(line[0], line[-1], line[i])
+		if d > dmax:
+			index = i
+			dmax = d
+
+	if dmax >= epsilon:
+		new_line = simplify_line(line[:index+1], epsilon)[:-1] + simplify_line(line[index:], epsilon)
+	else:
+		new_line = [line[0], line[-1]]
+
+	return new_line
+
+
+
 # Reduce number of nodes in geometry lines
 
 def simplify_geometry():
-
-	# Simplify line, i.e. reduce nodes within epsilon distance.
-	# Ramer-Douglas-Peucker method: https://en.wikipedia.org/wiki/Ramer–Douglas–Peucker_algorithm
-
-	def simplify_line(line, epsilon):
-
-		dmax = 0.0
-		index = 0
-		for i in range(1, len(line) - 1):
-			d = line_distance(line[0], line[-1], line[i])
-			if d > dmax:
-				index = i
-				dmax = d
-
-		if dmax >= epsilon:
-			new_line = simplify_line(line[:index+1], epsilon)[:-1] + simplify_line(line[index:], epsilon)
-		else:
-			new_line = [line[0], line[-1]]
-
-		return new_line
-
 
 	# Partition line into sublines at intersections before simplifying each partition
 
 	def partition_and_simplify(line):
 
-		remaining = line.copy()
+		remaining = copy.copy(line)
 		new_line = [ remaining.pop(0) ]
 
 		while remaining:
@@ -2047,6 +2362,9 @@ def save_osm(filename):
 	for node in nodes:
 		osm_id -= 1
 		osm_node = ET.Element("node", id=str(osm_id), action="modify", lat=str(node[1]), lon=str(node[0]))
+		if debug:
+			osm_node.append(ET.Element("tag", k="REF", v=str(osm_id)))
+
 		osm_root.append(osm_node)
 		osm_node_ids[ node ] = osm_id
 		node_count += 1
@@ -2078,6 +2396,7 @@ def save_osm(filename):
 				osm_feature.append(osm_tag)
 
 			if debug:
+				osm_feature.append(ET.Element("tag", k="REF", v=osm_feature.attrib['id']))
 				for key, value in iter(segment['extras'].items()):
 					osm_tag = ET.Element("tag", k=key.upper(), v=value)
 					osm_feature.append(osm_tag)
@@ -2149,6 +2468,7 @@ def save_osm(filename):
 			osm_feature.append(osm_tag)
 
 		if debug:
+			osm_feature.append(ET.Element("tag", k="REF", v=osm_feature.attrib['id']))
 			for key, value in iter(feature['extras'].items()):
 				osm_tag = ET.Element("tag", k=key.upper(), v=value)
 				osm_feature.append(osm_tag)
@@ -2176,22 +2496,12 @@ if __name__ == '__main__':
 	building_tags = {}   # Conversion table from building type to osm tag
 	object_count = {}    # Count loaded object types
 
-	debug =       False  # Include debug tags and unused segments
-	n50_tags =    False  # Include property tags from N50 in output
-	json_output = False  # Output complete and unprocessed geometry in geojson format
-	turn_stream = True   # Load elevation data to check direction of streams
-	lake_ele =    True   # Load elevation for lakes
-	no_name =     False  # Do not load SSR place names
-	no_nve =      False  # Do not load NVE lake data
-	no_node =     False  # Do not merge common nodes at intersections
-	simplify =    True   # Simplify geometry lines
-
 	# Parse parameters
 
-	if len(sys.argv) < 3:
-		message ("Please provide 1) municipality, and 2) data category parameter.\n")
+	if len(sys.argv) < 2:
+		message ("Please provide municipality, and optional data category parameter.\n")
 		message ("Data categories: %s\n" % ", ".join(data_categories))
-		message ("Options: -debug, -tag, -geojson, -nostream, -noele, -noname, -nonve, -nonode, -nosimplify\n\n")
+		message ("Options: -nosimplify, -short, -debug, -tag, -geojson\n\n")
 		sys.exit()
 
 	# Get municipality
@@ -2205,40 +2515,35 @@ if __name__ == '__main__':
 
 	# Get N50 data category
 
-	data_category = None
-	for category in data_categories:
-		if sys.argv[2].lower() in category.lower():
-			data_category = category
-			message ("N50 category:\t%s\n" % data_category)
-			break
-	if not data_category:
-		sys.exit("Please provide data category: %s\n" % ", ".join(data_categories))
+	if len(sys.argv) > 2 and not "-" in sys.argv[2]:
+		data_category = None
+		for category in data_categories:
+			if sys.argv[2].lower() in category.lower():
+				data_category = category
+				break
+		if not data_category:
+			sys.exit("Data category not recognized: %s\n" % ", ".join(data_categories))
+	else:
+		data_category = "Arealdekke"
+
+	message ("N50 category:\t%s\n" % data_category)
 
 	# Get other options
 
+	if "-nosimplify" in sys.argv:
+		simplify = False
+	if "-short" in sys.argv:
+		short = False
 	if "-debug" in sys.argv:
 		debug = True
 	if "-tag" in sys.argv or "-tags" in sys.argv:
 		n50_tags = True
 	if "-geojson" in sys.argv or "-json" in sys.argv:
 		json_output = True
-	if "-noele" in sys.argv or "-nohøyde" in sys.argv:
-		lake_ele = False
-	if "-nostream" in sys.argv or "-nobekk" in sys.argv:
-		turn_stream = True
-	if "-noname" in sys.argv:
-		no_name = True
-	if "-nonve" in sys.argv:
-		no_nve = True
-	if "-nonode" in sys.argv:
-		no_node = True
-	if "-nosimplify" in sys.argv:
-		simplify = False
-
-	if not turn_stream or not lake_ele:
-		message ("*** Remember -stream and -ele options before importing.\n")
 
 	output_filename = "n50_%s_%s_%s" % (municipality_id, municipality_name.replace(" ", "_"), data_category)
+	if debug:
+		output_filename += "_debug"
 
 	# Process data
 
@@ -2250,6 +2555,8 @@ if __name__ == '__main__':
 	if json_output:
 		save_geojson(output_filename + ".geojson")
 	else:
+		if short:
+			remove_short_segments()
 		split_polygons()
 		if data_category == "Arealdekke":
 			if not no_nve:
