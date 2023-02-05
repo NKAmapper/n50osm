@@ -12,7 +12,7 @@ Paramters:
   * <code>Arealdekke</code> - This is the topo data used in the N50 import (default if no category given).
   * <code>BygningerOgAnlegg</code> - Useful additional objects such as quay, pier, dam and various public services.
   * <code>Hoyde</code> - Peaks/hills and survey points.
-  * <code>Restriksjonsomrader</code> - Military areas.
+  * <code>Restriksjonsomrader</code> - Military areas and protected areas.
   * <code>Samferdsel</code> - Tracks and paths (rough topology).
   * <code>Stedsnavn</code> - Place names (no OSM tagging). Please use the [SSR import](https://wiki.openstreetmap.org/wiki/No:Import_av_stedsnavn_fra_SSR2) instead.
 * *options*:
