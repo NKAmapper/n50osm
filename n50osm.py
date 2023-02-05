@@ -97,7 +97,7 @@ osm_tags = {
 	# Hoyde
 
 	'Terrengpunkt':			{ 'natural': 'hill' },
-	'TrigonometriskPunkt':	{ 'natural': 'hill' },
+	'TrigonometriskPunkt':	{'man_made': 'survey_point', 'natural': 'hill'},
 
 	# Restriksjonsomrader
 
