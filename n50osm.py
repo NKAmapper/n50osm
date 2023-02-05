@@ -1027,7 +1027,7 @@ def create_border_segments(patch, members, gml_id, match):
 				'type': 'LineString',
 				'coordinates': patch[ start_index : end_index + 1],
 				'members': [],
-				'tags': { "FIXME": "Merge" },
+				'tags': { "fixme": "Merge" },
 				'extras': {
 					'objekttype': 'KantUtsnitt'
 				},
@@ -1857,9 +1857,9 @@ def fix_stream_direction():
 		if "decline" not in feature:
 			if elevations[ feature['coordinates'][0] ] is not None and elevations[ feature['coordinates'][-1] ] is not None:
 				ele_diff = elevations[ feature['coordinates'][0] ] - elevations[ feature['coordinates'][-1] ]
-				feature['tags']['FIXME'] = "Please check direction (%.2fm decline)" % ele_diff
+				feature['tags']['fixme'] = "Please check direction (%.2fm decline)" % ele_diff
 			else:
-				feature['tags']['FIXME'] = "Please check direction" 
+				feature['tags']['fixme'] = "Please check direction" 
 			check_count += 1
 		if "reversert" in feature['extras']:
 			reverse_count += 1
@@ -1922,7 +1922,7 @@ def get_ssr_name (feature, name_categories):
 					if len(alt_names) > 1:
 						if name != place['tags']['name']:
 							alt_names.insert(0, "%s [NVE]" % name)
-						feature['tags']['FIXME'] = "Alternative names: " + ", ".join(alt_names)
+						feature['tags']['fixme'] = "Alternative names: " + ", ".join(alt_names)
 					name_count += 1
 					break
 
@@ -1939,7 +1939,7 @@ def get_ssr_name (feature, name_categories):
 			feature['tags'].update(found_names[0]['tags'])
 			feature['extras']['ssr:type'] = feature['tags'].pop("ssr:type", None)
 			if len(alt_names) > 1:
-				feature['tags']['FIXME'] = "Alternative names: " + ", ".join(alt_names)
+				feature['tags']['fixme'] = "Alternative names: " + ", ".join(alt_names)
 			name_count += 1
 
 		# Not able to determine only one name
@@ -1947,10 +1947,10 @@ def get_ssr_name (feature, name_categories):
 			found_names.sort(key=lambda name: len(name['tags']['name']), reverse=True)  # Select longest name
 			feature['tags'].update(found_names[0]['tags'])
 			feature['extras']['ssr:type'] = feature['tags'].pop("ssr:type", None)		
-			feature['tags']['FIXME'] = "Consider names: " + ", ".join(alt_names)
+			feature['tags']['fixme'] = "Consider names: " + ", ".join(alt_names)
 
 		# Create separate nodes for each alternative name
-		if "FIXME" in feature['tags']:
+		if "fixme" in feature['tags']:
 			for place in found_names:
 				point = place['coordinate']
 				while point in nodes:
@@ -2041,7 +2041,7 @@ def get_place_names():
 				if "name" in tag.get('k') or tag.get('k') in ["ssr:stedsnr", "ssr:type"]:
 					if tag.get('k') == "fixme":
 						if "multiple name" in tag.get('v'):
-							entry['tags']['FIXME'] = "Multiple name tags, please choose one and add the other to alt_name"
+							entry['tags']['fixme'] = "Multiple name tags, please choose one and add the other to alt_name"
 					else:
 						entry['tags'][ tag.get('k') ] = tag.get('v')
 
