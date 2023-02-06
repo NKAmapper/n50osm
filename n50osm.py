@@ -16,7 +16,7 @@ from xml.etree import ElementTree as ET
 import utm
 
 
-version = "1.1.0"
+version = "1.2.0"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -56,12 +56,18 @@ avoid_tags = [  # N50 properties to exclude from output (unless debug)
 	'målemetode', 'nøyaktighet'
 ]
 
+object_sorting_order = [  # High priority will ensure ways in same direction
+	'Havflate', 'Innsjø', 'InnsjøRegulert', 'ElvBekk', 'FerskvannTørrfall', 'SnøIsbre',
+	'BymessigBebyggelse', 'Tettbebyggelse', 'Hyttefelt', 'Industriområde', 'Gravplass', 'Park',
+	'SportIdrettPlass', 'Alpinbakke', 'Golfbane', 'Lufthavn', 'Rullebane', 'Skytefelt',
+	'DyrketMark', 'Steinbrudd', 'Steintipp',' Myr', 'Skog'
+]
 
 osm_tags = {
 	# Arealdekke
 
 	'Alpinbakke':			{ 'landuse': 'winter_sports', 'piste:type': 'downhill' },  # Later also area=yes for closed ways
-	'BymessigBebyggelse':	{ 'landuse': 'retail' },  #'landuse': 'residential', 'residential': 'urban' },
+	'BymessigBebyggelse':	{ 'landuse': 'retail' },
 	'DyrketMark':			{ 'landuse': 'farmland' },
 	'ElvBekk':				{ 'waterway': 'stream' },  # Retagged later if river or area
 	'FerskvannTørrfall':	{ 'natural': 'water', 'water': 'river', 'intermittent': 'yes' },
@@ -97,7 +103,7 @@ osm_tags = {
 	# Hoyde
 
 	'Terrengpunkt':			{ 'natural': 'hill' },
-	'TrigonometriskPunkt':	{'man_made': 'survey_point', 'natural': 'hill'},
+	'TrigonometriskPunkt':	{ 'man_made': 'survey_point', 'natural': 'hill' },
 
 	# Restriksjonsomrader
 
@@ -986,7 +992,7 @@ def load_quay_breakwater(zip_file, filename):
 
 # Create missing KantUtsnitt segments to get complete polygons
 
-def create_border_segments(patch, members, gml_id, match):
+def create_border_segments(patch, members, gml_id, match, reverse):
 
 	# First create list of existing conncetions between coordinates i and i+1 of patch
 
@@ -1022,10 +1028,15 @@ def create_border_segments(patch, members, gml_id, match):
 			end_index += 1
 
 		if end_index > start_index:
+
+			coordinates = patch[ start_index : end_index + 1]
+			if reverse:
+				coordinates.reverse()
+
 			entry = {
 				'object': 'KantUtsnitt',
 				'type': 'LineString',
-				'coordinates': patch[ start_index : end_index + 1],
+				'coordinates': coordinates,
 				'members': [],
 				'tags': { "FIXME": "Merge" },
 				'extras': {
@@ -1045,6 +1056,7 @@ def create_border_segments(patch, members, gml_id, match):
 # - Order direction of ways for coastline, lakes, rivers and islands
 # - Order members of multipolygons
 # - Crate missing segments along municipality border
+# - Combine sequences of segments
 
 def split_polygons():
 
@@ -1057,6 +1069,12 @@ def split_polygons():
 			return min(patch.index(segments[segment_index]['coordinates'][0]), patch.index(segments[segment_index]['coordinates'][1]))
 		else:
 			return patch.index(segments[segment_index]['coordinates'][1])
+
+	def feature_order(feature):
+		if feature['object'] in object_sorting_order:
+			return object_sorting_order.index(feature['object'])
+		else:
+			return 100
 
 
 	message ("Decompose polygons into segments...\n")
@@ -1072,13 +1090,17 @@ def split_polygons():
 	split_count = 0
 	count = sum([feature['type'] == "Polygon" for feature in features])
 
-	for feature in features:
+	ordered_features = copy.copy(features)  # Shallow copy of list
+	ordered_features.sort(key=feature_order)  # Sort first coastline, lakes, rivers etc.
+
+	for feature in ordered_features:
 
 		if feature['type'] == "Polygon":
 			if count % 100 == 0:
 				message ("\r\t%i " % count)
 			count -= 1
 			matching_polygon = []
+			reverse_segments = feature['object'] in ["Havflate", "Innsjø", "InnsjøRegulert", "ElvBekk", "FerskvannTørrfall"]
 
 			for patch in feature['coordinates']:
 				matching_segments = []
@@ -1091,9 +1113,9 @@ def split_polygons():
 
 				for i, segment in enumerate(segments):
 
-					if	patch_min_bbox[0] <= segment['max_bbox'][0] and patch_max_bbox[0] >= segment['min_bbox'][0] and \
-						patch_min_bbox[1] <= segment['max_bbox'][1] and patch_max_bbox[1] >= segment['min_bbox'][1] and \
-						set(segment['coordinates']) <= patch_set:
+					if	(patch_min_bbox[0] <= segment['max_bbox'][0] and patch_max_bbox[0] >= segment['min_bbox'][0]
+							and patch_min_bbox[1] <= segment['max_bbox'][1] and patch_max_bbox[1] >= segment['min_bbox'][1]
+							and set(segment['coordinates']) <= patch_set):
 
 						# Note: If patch is a closed way, segment may wrap start/end of patch
 
@@ -1106,24 +1128,24 @@ def split_polygons():
 						matching_segments.append(i)
 						matched_nodes += len(segment['coordinates']) - 1
 
-						# Correct direction of coastline, lakes and riverways
+						# Check if feature polygon and segment line have same direction
+						node1 = patch.index(segment['coordinates'][0])
+						node2 = patch.index(segment['coordinates'][1])
+						same_direction = node1 + 1 == node2 or patch[0] == patch[-1] and node1 == len(patch) - 2 and node2 == 0
 
-						if feature['object'] == "Havflate" and \
-							segment['object'] in ["Kystkontur", "HavElvSperre", "HavInnsjøSperre"] or \
-							feature['object'] in ["Innsjø", "InnsjøRegulert", "ElvBekk", 'FerskvannTørrfall'] and \
-							segment['object'] in ["Innsjøkant", "InnsjøkantRegulert", "ElvBekkKant", "KantUtsnitt"]:
+						# Correct direction of segments. Note sorting order of features in outer loop.
 
+						if reverse_segments and segment['object'] != "FiktivDelelinje":
 							segment['used'] += 1
-
-							# Check if feature polygon and segment line have correct direction
-							node1 = patch.index(segment['coordinates'][0])
-							node2 = patch.index(segment['coordinates'][1])
-							if node1 + 1 == node2 or patch[0] == patch[-1] and node1 == len(patch) - 2 and node2 == 0:
-								segment['coordinates'].reverse()
+							if same_direction and (segment['used'] == 1 or feature['object'] == "Havflate"):
+								segment['coordinates'].reverse()  # Water objects have reverse direction
 								segment['extras']['reversert'] = "yes"
 
 						elif feature['object'] != "Havflate":
 							segment['used'] += 1
+							if segment['object'] == "Arealbrukgrense" and not same_direction and segment['used'] == 1:
+								segment['coordinates'].reverse()
+								segment['extras']['reversert'] = "yes"
 
 						if matched_nodes == len(patch) - 1:
 							break
@@ -1131,10 +1153,10 @@ def split_polygons():
 				if matching_segments:
 					# Use leftover nodes to create missing border segments
 					if matched_nodes < len(patch) - 1 and feature['object'] != "Havflate":
-						create_border_segments(patch, matching_segments, feature['gml_id'], matched_nodes)
+						create_border_segments(patch, matching_segments, feature['gml_id'], matched_nodes, reverse_segments)
 
 					# Sort relation members for better presentation
-					matching_segments.sort(key=lambda segment_index: segment_position(segment_index, patch))
+					matching_segments.sort(key=lambda segment_index: segment_position(segment_index, patch), reverse=reverse_segments)
 					matching_polygon.append(matching_segments)
 					split_count += len(matching_segments) - 1
 				else:
@@ -1149,7 +1171,95 @@ def split_polygons():
 				feature['coordinates'] = feature['coordinates'][0]
 
 	message ("\r\t%i splits\n" % split_count)
+
+	if simplify:
+		combine_segments()
+
 	message ("\tRun time %s\n" % (timeformat(time.time() - lap)))
+
+
+
+# Combine sequences of segments/ways which have the same type, parents and tags
+
+def combine_segments():
+
+	# Get list of parents (features) for each segment
+
+	for segment in segments:
+		segment['parents'] = set()
+
+	for i, feature in enumerate(features):
+		if feature['type'] == "Polygon":
+			for patch in feature['members']:
+				for member in patch:
+					segments[ member ]['parents'].add(i)
+
+	# Identify sequences of segments with same parents and same type
+
+	combinations = []  # Will contain all sequences to combine
+	for feature in features:
+		if feature['type'] == "Polygon":
+			for patch in feature['members']:
+				first = True
+				remaining = patch[:]
+
+				while remaining:
+					combine = [ remaining.pop(0) ]
+
+					# Build sequence of segments until different
+					while (remaining
+								and segments[ combine[0] ]['parents'] == segments[ remaining[0] ]['parents']
+								and segments[ combine[0] ]['object'] == segments[ remaining[0] ]['object']
+								and segments[ combine[0] ]['tags'] == segments[ remaining[0] ]['tags']):
+						combine.append(remaining.pop(0))
+
+					if first and len(combine) < len(patch):
+						remaining.extend(combine)  # Wrap around end to check longer sequence
+					elif len(combine) > 1 and not any([set(combine) == set(c) for c in combinations]):
+						combinations.append(combine)
+					first = False
+
+	# Update segments with combinations
+
+	remove = set()  # Will contain all segments to be combined into another segment
+	for combine in combinations:
+
+		# Get correct order for combined string of coordinates
+		if segments[ combine[0] ]['coordinates'][-1] != segments[ combine[1] ]['coordinates'][0]:
+			combine.reverse()
+
+		coordinates = []
+		for segment_id in combine:
+			segment = segments[ segment_id ]
+			if not coordinates:
+				coordinates = segment['coordinates'][:]
+			else:
+				coordinates.extend(segment['coordinates'][1:])
+
+		# Keep the first segment in the sequence
+		segments[ combine[0] ]['coordinates'] = coordinates
+		segments[ combine[0] ]['extras']['combine'] = str(len(combine))
+
+		for segment_id in combine[1:]:
+			segments[ segment_id ]['used'] = 0  # Mark as not in use/not for output
+			remove.add(segment_id)
+
+	# Update features with combinations
+
+	for feature in features:
+		if feature['type'] == "Polygon":
+			new_members = []
+			for patch in feature['members']:
+				new_patch = []
+				for member in patch:
+					if member not in remove:
+						new_patch.append(member)
+				new_members.append(new_patch)
+			if new_members != feature['members']:
+				feature['members'] = new_members
+
+	count_segments = sum([len(combine) for combine in combinations])
+	message ("\tCombined %i segments into %i longer segments\n" % (count_segments, len(combinations)))
 
 
 
@@ -1562,9 +1672,14 @@ def match_nodes():
 		
 		# Loop streams to identify intersections with segments
 
+		count = sum([feature['type'] == "LineString" and feature['object'] == "ElvBekk" for feature in features])
+
 		for feature in features:
 			if feature['type'] == "LineString" and feature['object'] == "ElvBekk":
 				[ feature['min_bbox'], feature['max_bbox'] ] = get_bbox(feature['coordinates'], 0)
+				if count % 100 == 0:
+					message ("\r\t%i " % count)
+				count -= 1
 
 				for segment in segments:
 					if (segment['used'] > 0 or debug) and \
@@ -1614,7 +1729,7 @@ def match_nodes():
 			segment['coordinates'] = simplify_line(segment['coordinates'], simplify_factor)  # Usually straight line (2 nodes)
 			delete_count -= len(segment['coordinates'])			
 
-	message ("\t%i common nodes, %i nodes removed from streams and auxiliary lines\n" % (len(nodes) - node_count, delete_count))
+	message ("\r\t%i common nodes, %i nodes removed from streams and auxiliary lines\n" % (len(nodes) - node_count, delete_count))
 	message ("\tRun time %s\n" % (timeformat(time.time() - lap)))
 
 
@@ -2372,7 +2487,7 @@ def save_osm(filename):
 	# Ways used by relations
 
 	for segment in segments:
-		if segment['used'] > 0 or debug: # or segment['object'] == "Kystkontur":
+		if segment['used'] > 0 or debug:
 			osm_id -= 1
 			osm_feature = ET.Element("way", id=str(osm_id), action="modify")
 			osm_root.append(osm_feature)
