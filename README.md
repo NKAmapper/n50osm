@@ -61,6 +61,7 @@ Paramters:
 ### Changelog
 
 n50osm.py
+* 1.2: Short ways combined into longer ways; More intuitive sorting of relationship members.
 * 1.1: Simplified program arguments; use best UTM zone; remove short segments <2m; include quays and breakwaters; include nodes for alternative SSR names.
 * 1.0: Big speed improvement (elevations); stream network analysis to confirm more stream directions; most script options are now default.
 * 0.8: Alternative SSR source; update riverbank tagging; fix island identification; various improvements.
