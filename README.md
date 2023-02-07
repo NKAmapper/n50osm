@@ -26,14 +26,15 @@ The *utm.py* file should be located in the same folder as *n50osm.py* when runni
 
 ### n50merge.py ###
 
-Merges N50 import file with existing OSM, when importing partitions of a municipality in stages. Also splits import file into smaller files.
+Merges N50 import file with existing OSM. Also splits import file into smaller "layer" files with option to merge each of those layers to each other one by one.
 
-Usage: <code>python3 n50merge.py \<municipality\> [filename] [-split]</code>
+Usage: <code>python3 n50merge.py \<municipality\> [filename] [-split|-layer]</code>
 
 Paramters:
-* *municipality* - Name of municipality or 4 digit municipality number.
-* *filename* - N50 import file, or standard category from split (*coastline*, *water*, *wood* or *landuse*). If not given, the program will look for the filename produced by n50osm.py for the given municipality.
-* <code>-split</code> - Will split the N50 import file into 4 categories (*coastline*, *water*, *wood* or *landuse*). No merging.
+* *municipality* - Name of municipality or 4 digit municipality number. If only this parameter is given, the file produced by *n50osm.py* will be merged with OSM.
+* *filename* - Optional N50 import file, or standard category from split (*coastline*, *water*, *wood* or *landuse*). If not given, the program will look for the filename produced by n50osm.py for the given municipality.
+* <code>-split</code> - Will split the N50 import file into 4 layers (*coastline*, *water*, *wood* or *landuse*). No merging.
+* <code>-layer</code> - Will merge one of the N50 layers produced by split into OSM. Identical ways already in OSM from previous layers are merged.
 
 ### Notes ###
 
@@ -43,13 +44,15 @@ Paramters:
   * Elevation data is loaded from Kartverket DTM api (not from the elevation DEM or TIFF files).
   * Place names are loaded from the [SSR import files](https://wiki.openstreetmap.org/wiki/No:Import_av_stedsnavn_fra_SSR2) created by the OSM community.
   * Buildings are tagged according to the building type CSV file on GitHub.
-  * The program has an exponential complexity. Most municipalities will run in a few seconds, large municipalities will run in minutes (for example Vinje in 30 mins), while the largest municipalities might require several hours to complete.
-   * Only one file for the entire municipality is produced. Please split into suitable sections when importing, either manually, or using *n50merge.py* with the <code>-split</code> option.
+  * The program has an exponential complexity. Most municipalities will run in a few seconds, large municipalities will run in minutes (for example Vinje in 60 mins), while the largest municipalities might require several hours to complete.
+   * Only one file for the entire municipality is produced. You may split it into suitable sections when importing, either manually, or using *n50merge.py* with the <code>-split</code> option.
   * A few fixme tags are produced for streams which need manual inspection regarding downhill direction, as well as for place names whenever SSR contains more than one approved name for an object.
 * The *n50merge.py* program merges the N50 import file with existing OSM data which it loads from Overpass.
-  * Only identical ways and relations are combined, typically those produced by *n50osm.py*.
-  * Remaining ways must be combined manually in JOSM, including any parent relations. Validate and look for overlapping nodes or areas. Finally, upload to OSM.
-  * Wait approx. 5 minutes after uploading before running *n50merge.py* again, to allow OSM to update properly.
+  * Please walk through and fix each FIXME tag except <code>FIXME=Merge</code> in the import file. Also, run the validator in JOSM on the file and fix any errors before using *n50merge.py*.
+  * Polygons and lines in N50 and OSM will be merged based on similary of shapes and tags.
+  * Please avoid using any nodes belonging to <code>boundary=*</code> ways and relations. Search for them with <code>type:node child boundary</code> in JOSM.
+  * When using the <code>-layer</code> argument only identical ways and relations are combined, typically those produced by *n50osm.py*.
+  * Remaining ways must be combined manually in JOSM, including any parent relations. Validate and look for overlapping nodes or areas. Remove any remaining <code>FIXME=Merge</code> tags. Finally, upload to OSM.
 * This is a supplement to [topo2osm](https://github.com/osmno/topo2osm). The main differences are:
   * All required input data are automatically loaded.
   * All features are stored in one file.
@@ -69,6 +72,10 @@ n50osm.py
 * 0.6. Building=* tags only on polygons, not nodes.
 * 0.5: New API for elevations.
 * 0.4: Code converted to Python 3.
+
+n50merge.py
+* 1.0: Support for automatic matching and merging based on similarity of shapes.
+* 0.2: Code converted to Python 3.
 
 ### References ###
 
