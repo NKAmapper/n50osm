@@ -75,7 +75,7 @@ n50osm.py
 
 n50merge.py
 * 1.0: Support for automatic matching and merging based on similarity of shapes.
-* 0.2: Code converted to Python 3.
+* 0.1: Initial limited version.
 
 ### References ###
 
