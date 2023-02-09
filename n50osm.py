@@ -16,7 +16,7 @@ from xml.etree import ElementTree as ET
 import utm
 
 
-version = "1.2.0"
+version = "1.3.0"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -45,7 +45,8 @@ avoid_objects = [  # Object types to exclude from output
 	'ÅpentOmråde', 'Tregruppe',  # Arealdekke
 	'GangSykkelveg', 'VegSenterlinje', 'Vegsperring',  # Samferdsel
 	'Forsenkningskurve', 'Hjelpekurve', 'Høydekurve',  # Hoyde
-	'PresentasjonTekst'  # Stedsnavn
+	'PresentasjonTekst',  # Stedsnavn
+	'Dataavgrensning'
 ]
 
 auxiliary_objects = ['Arealbrukgrense', 'Dataavgrensning', 'FiktivDelelinje',
@@ -826,6 +827,7 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 	source_date = ["9", "0"]	 # First and last source date ("datafangstdato")
 	update_date = ["9", "0"]	 # First and last update date ("oppdateringsdato")
 	stream_count = 0
+	object_count = {}
 	missing_tags = set()
 
 	# Load latest N50 file for municipality from Kartverket, using best UTM zone available
@@ -936,7 +938,8 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 				stream_count += 1			
 
 	if data_category == "Arealdekke":
-		load_quay_breakwater(zip_file, filename)
+		count_type = load_quay_breakwater(zip_file, filename)
+		object_count.update(count_type)
 
 	file_in.close()
 
@@ -971,6 +974,7 @@ def load_quay_breakwater(zip_file, filename):
 	root = tree.getroot()
 	count_load = 0
 	count_merged = 0
+	count_objects = {}
 
 	for feature in root:
 		if "featureMember" in feature.tag:
@@ -980,13 +984,17 @@ def load_quay_breakwater(zip_file, filename):
 				geometry_type, coordinate_type, properties, coordinates = parse_feature(feature)
 				coordinate_set = set(coordinates)
 				count_load += 1
+				if feature_type not in count_objects:
+					count_objects[ feature_type ] = 0
+				count_objects[ feature_type ] += 1
 
 				for segment in segments:
-					if len(coordinate_set.intersection(segment['coordinates'])) > 1:
+					if set(segment['coordinates']).issubset(coordinate_set):
 						segment['tags'].update(osm_tags[ feature_type ])
 						count_merged += 1
 
 	message ("%i loaded, merged in %i segments\n" % (count_load, count_merged))
+	return count_objects
 
 
 
@@ -1183,22 +1191,67 @@ def split_polygons():
 
 def combine_segments():
 
-	# Get list of parents (features) for each segment
+	# Internal function to update segments and features with the identified combinations of segments
+
+	def update_segments_and_features(combinations):
+
+		# Update segments with combinations
+
+		remove = set()  # Will contain all segments to be combined into another segment
+		for combine in combinations:
+
+			# Get correct order for combined string of coordinates
+			if segments[ combine[0] ]['coordinates'][-1] != segments[ combine[1] ]['coordinates'][0]:
+				combine.reverse()
+
+			coordinates = []
+			for segment_id in combine:
+				segment = segments[ segment_id ]
+				if not coordinates:
+					coordinates = segment['coordinates'][:]
+				else:
+					coordinates.extend(segment['coordinates'][1:])
+
+			# Keep the first segment in the sequence
+			segments[ combine[0] ]['coordinates'] = coordinates
+			segments[ combine[0] ]['extras']['combine'] = str(len(combine))
+
+			for segment_id in combine[1:]:
+				segments[ segment_id ]['used'] = 0  # Mark as not in use/not for output
+				remove.add(segment_id)
+
+		# Update features with combinations
+
+		for feature in features:
+			if feature['type'] == "Polygon":
+				new_members = []
+				for patch in feature['members']:
+					new_patch = []
+					for member in patch:
+						if member not in remove:
+							new_patch.append(member)
+					new_members.append(new_patch)
+				if new_members != feature['members']:
+					feature['members'] = new_members
+
+
+	# Start of main function.
+	# Part 1: Get list of parents (features) for each segment.
 
 	for segment in segments:
 		segment['parents'] = set()
 
 	for i, feature in enumerate(features):
-		if feature['type'] == "Polygon":
+		if feature['type'] == "Polygon":  # and feature['object'] not in ["Havflate", "ÅpentOmråde"]:
 			for patch in feature['members']:
 				for member in patch:
 					segments[ member ]['parents'].add(i)
 
-	# Identify sequences of segments with same parents and same type
+	# Part 2: Combine segments within each feature polygon (not across features/polygons)
 
 	combinations = []  # Will contain all sequences to combine
 	for feature in features:
-		if feature['type'] == "Polygon":
+		if feature['type'] == "Polygon": # and feature['object'] != "ÅpentOmråde":
 			for patch in feature['members']:
 				first = True
 				remaining = patch[:]
@@ -1208,9 +1261,9 @@ def combine_segments():
 
 					# Build sequence of segments until different
 					while (remaining
-								and segments[ combine[0] ]['parents'] == segments[ remaining[0] ]['parents']
-								and segments[ combine[0] ]['object'] == segments[ remaining[0] ]['object']
-								and segments[ combine[0] ]['tags'] == segments[ remaining[0] ]['tags']):
+							and segments[ combine[0] ]['parents'] == segments[ remaining[0] ]['parents']
+							and segments[ combine[0] ]['object'] == segments[ remaining[0] ]['object']
+							and segments[ combine[0] ]['tags'] == segments[ remaining[0] ]['tags']):
 						combine.append(remaining.pop(0))
 
 					if first and len(combine) < len(patch):
@@ -1219,47 +1272,60 @@ def combine_segments():
 						combinations.append(combine)
 					first = False
 
-	# Update segments with combinations
-
-	remove = set()  # Will contain all segments to be combined into another segment
-	for combine in combinations:
-
-		# Get correct order for combined string of coordinates
-		if segments[ combine[0] ]['coordinates'][-1] != segments[ combine[1] ]['coordinates'][0]:
-			combine.reverse()
-
-		coordinates = []
-		for segment_id in combine:
-			segment = segments[ segment_id ]
-			if not coordinates:
-				coordinates = segment['coordinates'][:]
-			else:
-				coordinates.extend(segment['coordinates'][1:])
-
-		# Keep the first segment in the sequence
-		segments[ combine[0] ]['coordinates'] = coordinates
-		segments[ combine[0] ]['extras']['combine'] = str(len(combine))
-
-		for segment_id in combine[1:]:
-			segments[ segment_id ]['used'] = 0  # Mark as not in use/not for output
-			remove.add(segment_id)
-
-	# Update features with combinations
-
-	for feature in features:
-		if feature['type'] == "Polygon":
-			new_members = []
-			for patch in feature['members']:
-				new_patch = []
-				for member in patch:
-					if member not in remove:
-						new_patch.append(member)
-				new_members.append(new_patch)
-			if new_members != feature['members']:
-				feature['members'] = new_members
-
+	update_segments_and_features(combinations)
 	count_segments = sum([len(combine) for combine in combinations])
-	message ("\tCombined %i segments into %i longer segments\n" % (count_segments, len(combinations)))
+	count_combinations = len(combinations)
+
+	# Part 3: Combine remaining coastline combinations across features/polygons (ways split due to Havflate grids)
+
+	# Get relevant coastline segments, i.e. which are next to FiktivDelelinje segments
+
+	coastlines = []
+	for j, feature in enumerate(features):
+		if feature['object'] == "Havflate" and len(feature['members']) > 0:
+			patch = feature['members'][0]
+			n = len(patch)
+			for i, member in enumerate(patch):  # Only outer patch
+				segment = segments[ member ]
+				if (segment['object'] == "Kystkontur"
+						and (segments[ patch[ (i-1) % n ] ]['object'] == "FiktivDelelinje"
+							or segments[ patch[ (i+1) % n ] ]['object'] == "FiktivDelelinje")):
+					coastlines.append(member)
+					segment['parents'].remove(j)
+
+	# Merge coastline segments until exhausted
+
+	combinations = []
+	while coastlines: 
+		segment1 = segments[ coastlines[0] ]
+		combine = [ coastlines.pop(0) ]
+		first_node = segment1['coordinates'][0]
+		last_node = segment1['coordinates'][-1]
+
+		# Build sequence of coastline segments until closed way or differnt
+
+		found = True
+		while found and first_node != last_node:
+			found = False
+			for segment_id in coastlines[:]:
+				segment2 = segments[ segment_id ]
+				if (segment2['coordinates'][0] == last_node
+						and segment2['parents'] == segment1['parents']
+						and segment2['tags'] == segment1['tags']):
+					last_node = segment2['coordinates'][-1]
+					combine.append(segment_id)
+					coastlines.remove(segment_id)
+					found = True
+					break
+
+		if len(combine) > 1:
+			combinations.append(combine)
+
+	update_segments_and_features(combinations)
+	count_segments += sum([len(combine) for combine in combinations])
+	count_combinations += len(combinations)
+
+	message ("\tCombined %i segments into %i longer segments\n" % (count_segments, count_combinations))
 
 
 
@@ -1394,7 +1460,6 @@ def remove_short_segments():
 	for segment in segments[:]:
 		if len(segment['coordinates']) == 3:
 			if segment['coordinates'][0] == segment['coordinates'][-1]:
-#				message ("3 delete: %s %s\n" % (segment['coordinates'][0], segment['tags']))
 				swap_nodes[ segment['coordinates'][1] ] = None
 				add_segment_list(segment['coordinates'][0], segment['coordinates'][-1])
 				segments.remove(segment)
@@ -1417,7 +1482,6 @@ def remove_short_segments():
 		for segment2 in short_segments:
 			if (set(segment1['coordinates']) == set(segment2['coordinates']) and segment2 in segments and segment1 != segment2):
 				segments.remove(segment2)
-#				message ("Duplikat  ")
 				break
 
 	# Update all affected features
@@ -1433,14 +1497,11 @@ def remove_short_segments():
 					new_patch = [ swap_coordinates(patch) ]
 					if new_patch[0] != patch:
 						new_patch = split_patch(new_patch[0])
-#						if len(new_patch) > 1:
-#							message ("Polygon split  ")
 				if new_patch[0]:
 					new_polygon.extend(new_patch)
 			if new_polygon and new_polygon != feature['coordinates']:
 				feature['coordinates'] = new_polygon
 			elif not new_polygon:
-#				message ("Empty polygon  ")
 				features.remove(feature)
 
 	message ("\r\tRemoved %i short segments\n" % count_remove)
@@ -1481,12 +1542,7 @@ def find_islands():
 
 				# Do not use patch with intermittent edge
 
-				found = True
-				for member in feature['members'][i]:
-					if segments[ member ]['object'] == "FerskvannTørrfallkant":
-						found = False
-						break
-				if not found:
+				if any([segments[ member ]['object'] == "FerskvannTørrfallkant" for member in feature['members'][i]]):
 					continue
 
 				# Determine island type based on area
@@ -2002,77 +2058,111 @@ def get_ssr_name (feature, name_categories):
 	else:
 		polygon = feature['coordinates'][0]
 
-	found_names = []
+	found_places = []
 	names = []
 
 	# Find name in stored file
 
 	for place in ssr_places:
-		if bbox[0][0] <= place['coordinate'][0] <= bbox[1][0] and bbox[0][1] <= place['coordinate'][1] <= bbox[1][1] and \
-				place['tags']['ssr:type'] in name_categories and place['tags']['name'] not in names and \
-				(feature['type'] == "Point" or inside_polygon(place['coordinate'], polygon)):
-			found_names.append(place)
+		if (bbox[0][0] <= place['coordinate'][0] <= bbox[1][0]
+				and bbox[0][1] <= place['coordinate'][1] <= bbox[1][1]
+				and place['tags']['ssr:type'] in name_categories
+				and place['tags']['name'] not in names
+				and (feature['type'] == "Point" or inside_polygon(place['coordinate'], polygon))):
+			found_places.append(place)
 			names.extend(place['tags']['name'].replace(" - ", ";").split(";"))  # Split multiple languages + variants
 
 	# Sort and select name
 
-	if found_names:
+	if found_places:
+		found_places.sort(key=lambda place: name_categories.index(place['tags']['ssr:type']))
 
-		found_names.sort(key=lambda name: name_categories.index(name['tags']['ssr:type']))  # place_name_rank(name, name_categories))
 
+		# Establish alternative names for fixme tag
 		alt_names = []
-		sea = ("Sjø" in found_names[0]['tags']['ssr:type'])
-		for place in found_names:
+		sea = ("Sjø" in found_places[0]['tags']['ssr:type'])
+		for place in found_places:
 			if not sea or "Sjø" in place['tags']['ssr:type']:
 				alt_names.append("%s [%s %s]" % (place['tags']['name'], place['tags']['ssr:type'], place['tags']['ssr:stedsnr']))
+
+		nve = 0
+		if "name" in feature['tags']:
+			alt_names.insert(0, "%s [NVE]" % feature['tags']['name'])
+			nve = 1
 
 		# Name already suggested by NVE data, so get ssr:stedsnr and any alternative names
 		if "name" in feature['tags'] and feature['tags']['name'] in names:
 			name = feature['tags']['name']
-			for place in found_names:
+			for place in found_places:
 				if name in place['tags']['name'].replace(" - ", ";").split(";"):
 					feature['tags'].update(place['tags'])
-					feature['tags']['name'] = name  # Add back NVE name
+#					feature['tags']['name'] = name  # Add back NVE name
 					feature['extras']['ssr:type'] = feature['tags'].pop("ssr:type", None)
-					if len(alt_names) > 1:
-						if name != place['tags']['name']:
-							alt_names.insert(0, "%s [NVE]" % name)
-						feature['tags']['FIXME'] = "Alternative names: " + ", ".join(alt_names)
+
+					if "N100" in place['tags']:
+						feature['extras']['N100'] = feature['tags'].pop("N100", None)
+					if len(alt_names) > 1 + nve:
+						feature['tags']['FIXME'] = "Verify NVE name: " + ", ".join(alt_names)
 					name_count += 1
 					break
 
-		# Only one name found, or only one name of preferred type
-		elif len(alt_names) == 1 or \
-				"øyISjø" in found_names[0]['tags']['ssr:type'] and "øyISjø" not in found_names[1]['tags']['ssr:type'] or \
-				"øy" in found_names[0]['tags']['ssr:type'] and "øy" not in found_names[1]['tags']['ssr:type'] or \
-				"holme" in found_names[0]['tags']['ssr:type'] and "holme" not in found_names[1]['tags']['ssr:type']:
+		# Use N100 rank if present
+		elif any(["N100" in place['tags'] for place in found_places]):
+			n100_places = [place for place in found_places if "N100" in place['tags']]
+			n100_places.sort(key=lambda place: place['tags']['N100'])
 
-			if "name" in feature['tags'] and (len(alt_names) > 1 or \
-					feature['tags']['name'] not in found_names[0]['tags']['name'].replace(" - ", ";").split(";")):
-				alt_names.insert(0, "%s [NVE]" % feature['tags']['name'])
-
-			feature['tags'].update(found_names[0]['tags'])
+			feature['tags'].update(n100_places[0]['tags'])
 			feature['extras']['ssr:type'] = feature['tags'].pop("ssr:type", None)
-			if len(alt_names) > 1:
-				feature['tags']['FIXME'] = "Alternative names: " + ", ".join(alt_names)
+			feature['extras']['N100'] = feature['tags'].pop("N100", None)
+
+			if len(alt_names) > 1 + nve:
+				if len(n100_places) > 1 and n100_places[0]['tags']['N100'] == n100_places[1]['tags']['N100']:
+					feature['tags']['FIXME'] = "Choose N100 name: " + ", ".join(alt_names)					
+				else:
+					feature['tags']['FIXME'] = "Verify N100 name: " + ", ".join(alt_names)
+			name_count += 1
+
+		# Only one name found, or only one name of preferred type
+		elif (len(alt_names) == 1 + nve
+				or "øyISjø" in found_places[0]['tags']['ssr:type'] and "øyISjø" not in found_places[1]['tags']['ssr:type']
+				or "øy" in found_places[0]['tags']['ssr:type'] and "øy" not in found_places[1]['tags']['ssr:type']
+				or "holme" in found_places[0]['tags']['ssr:type'] and "holme" not in found_places[1]['tags']['ssr:type']):
+
+			feature['tags'].update(found_places[0]['tags'])
+			feature['extras']['ssr:type'] = feature['tags'].pop("ssr:type", None)
+
+			if len(alt_names) > 1 + nve:
+				feature['tags']['FIXME'] = "Verify name: " + ", ".join(alt_names)
 			name_count += 1
 
 		# Not able to determine only one name
 		else:
-			found_names.sort(key=lambda name: len(name['tags']['name']), reverse=True)  # Select longest name
-			feature['tags'].update(found_names[0]['tags'])
+			# If same type, select longest name
+			same_places = [ place for place in found_places if place['tags']['ssr:type'] == found_places[0]['tags']['ssr:type'] ]
+			same_places.sort(key=lambda name: len(name['tags']['name']), reverse=True)
+				
+			feature['tags'].update(same_places[0]['tags'])
 			feature['extras']['ssr:type'] = feature['tags'].pop("ssr:type", None)		
-			feature['tags']['FIXME'] = "Consider names: " + ", ".join(alt_names)
+			feature['tags']['FIXME'] = "Choose name: " + ", ".join(alt_names)
+
+		# Warning for equal rank names ("sidestilte navn")
+		if ";" in feature['tags']['name']:
+			if "FIXME" in feature['tags']:
+				feature['tags']['FIXME'] = feature['tags']['FIXME'].replace("Verify", "Choose")
+			else:
+				feature['tags']['FIXME'] = "Choose equivalent name: " + feature['tags']['name']
 
 		# Create separate nodes for each alternative name
 		if "FIXME" in feature['tags']:
-			for place in found_names:
+			for place in found_places:
 				point = place['coordinate']
 				while point in nodes:
-					point = (point[0], point[1] + 0.001)
-				create_point(point, place['tags'], object_type = "Stedsnavn")
+					point = (point[0], point[1] + 0.00005)
+				tags = copy.deepcopy(place['tags'])
+				tags['SSR_TYPE'] = tags.pop("ssr:type", None)
+				create_point(point, tags, object_type = "Stedsnavn")
 
-		return found_names[0]['coordinate']
+		return found_places[0]['coordinate']
 
 	else:
 		return None
@@ -2119,7 +2209,7 @@ def get_place_names():
 		for feature in data['features']:
 			tags = {}
 			for key, value in iter(feature['properties'].items()):
-				if "name" in key or key in ["ssr:stedsnr", "TYPE"]:
+				if "name" in key or key in ["ssr:stedsnr", "TYPE", "N100"]:
 					if key == "TYPE":
 						tags['ssr:type'] = value
 					else:
@@ -2148,25 +2238,43 @@ def get_place_names():
 		root = tree.getroot()
 
 		for node in root.iter('node'):
-			entry = {
-				'coordinate': (float(node.get('lon')), float(node.get('lat'))),
-				'tags': {}
-			}	
+			tags = {}
 			for tag in node.iter('tag'):
 				if "name" in tag.get('k') or tag.get('k') in ["ssr:stedsnr", "ssr:type"]:
-					if tag.get('k') == "fixme":
-						if "multiple name" in tag.get('v'):
-							entry['tags']['FIXME'] = "Multiple name tags, please choose one and add the other to alt_name"
-					else:
-						entry['tags'][ tag.get('k') ] = tag.get('v')
+					tags[ tag.get('k') ] = tag.get('v')
+			entry = {
+				'coordinate': (float(node.get('lon')), float(node.get('lat'))),
+				'tags': tags
+			}
 
-			ssr_places.append(entry)
+			# Split multiple equally ranked names in name=* ("likestilte navn")
+			# No support for language suffixes (.no, .se, .fkv etc)
+
+			if ";" in tags['name'] and " - " not in tags['name']:
+				point = entry['coordinate']
+				for name in tags['name'].split(";"):
+					new_entry = copy.deepcopy(entry)
+					new_entry['tags']['name'] = name
+					alt_name = tags['name'].split(";")
+					alt_name.remove(name)
+					alt_name = ";".join(alt_name)
+					if "alt_name" in tags:
+						new_entry['tags']['alt_name'] = alt_name + ";" + new_entry['tags']['alt_name']
+					else:
+						new_entry['tags']['alt_name'] = alt_name
+					new_entry['FIXME'] = "Chose equivalent name: " + tags['name']
+					new_entry['coordinate'] = point
+					point = (point[0], point[1] + 0.00002)
+					ssr_places.append(new_entry)
+			else:
+				ssr_places.append(entry)
+
 
 	message ("\t%i place names in SSR file from %s\n" % (len(ssr_places), ssr_source))
 
 	# Get island names
 
-	name_category = ["øyISjø", "øygruppeISjø", "holmeISjø", "skjærISjø", "øy", "øygruppe", "holme", "skjær"]
+	name_category = ["øyISjø", "øygruppeISjø", "holmeISjø", "skjærISjø", "øy", "øygruppe", "holme", "skjær"]  # "holmegruppeISjø"
 	for elements in [segments, features]:
 		for element in elements:
 			if "place" in element['tags'] and element['tags']['place'] in ["island", "islet"]:
@@ -2177,7 +2285,7 @@ def get_place_names():
 	if lake_ele and data_category == "Arealdekke":
 		message ("\tLoading lake elevations...\n")
 
-	name_category = ["innsjø", "delAvInnsjø", "vann", "gruppeAvVann", "kanal", "gruppeAvTjern", "tjern", "lon", "pytt"]
+	name_category = ["innsjø", "delAvInnsjø", "vann", "gruppeAvVann", "delAvVann", "kanal", "gruppeAvTjern", "tjern", "lon", "pytt"]
 	lake_ele_count = 0
 	ele_nodes = []
 	lake_elevations = []
@@ -2609,7 +2717,6 @@ if __name__ == '__main__':
 	nodes = set()        # Common nodes at intersections, including start/end nodes of segments [lon,lat]
 	elevations = {}		 # Elevations fetched from api
 	building_tags = {}   # Conversion table from building type to osm tag
-	object_count = {}    # Count loaded object types
 
 	# Parse parameters
 
