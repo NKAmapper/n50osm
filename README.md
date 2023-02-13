@@ -17,7 +17,7 @@ Paramters:
   * <code>Stedsnavn</code> - Place names (no OSM tagging). Please use the [SSR import](https://wiki.openstreetmap.org/wiki/No:Import_av_stedsnavn_fra_SSR2) instead.
 * *options*:
   * <code>-nosimplify</code> - Do not simplify geometry lines before output.
-  * <code>-short</code> - Keep short segments <2 meters.
+  * <code>-short</code> - Remove short segments <2 meters.
   * <code>-debug</code> - Include extra tags and lines for debugging, including original N50 tags.
   * <code>-tag</code> - Include original N50 tags.
   * <code>-geojson</code> - Output raw N50 data in geojson format file.
