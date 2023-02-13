@@ -16,7 +16,7 @@ from xml.etree import ElementTree as ET
 import utm
 
 
-version = "1.3.0"
+version = "1.3.1"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -37,7 +37,7 @@ no_name =     False  # Do not load SSR place names
 no_nve =      False  # Do not load NVE lake data
 no_node =     False  # Do not merge common nodes at intersections
 simplify =    True   # Simplify geometry lines
-short =       True   # Remove short segments (<2 m)
+short =       False  # Remove short segments (<2 m)
 
 data_categories = ["AdministrativeOmrader", "Arealdekke", "BygningerOgAnlegg", "Hoyde", "Restriksjonsomrader", "Samferdsel", "Stedsnavn"]
 
@@ -2755,7 +2755,7 @@ if __name__ == '__main__':
 	if "-nosimplify" in sys.argv:
 		simplify = False
 	if "-short" in sys.argv:
-		short = False
+		short = True
 	if "-debug" in sys.argv:
 		debug = True
 	if "-tag" in sys.argv or "-tags" in sys.argv:
