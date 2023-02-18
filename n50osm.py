@@ -16,7 +16,7 @@ from xml.etree import ElementTree as ET
 import utm
 
 
-version = "1.3.1"
+version = "1.4.0"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -72,6 +72,7 @@ osm_tags = {
 	'DyrketMark':			{ 'landuse': 'farmland' },
 	'ElvBekk':				{ 'waterway': 'stream' },  # Retagged later if river or area
 	'FerskvannTørrfall':	{ 'natural': 'water', 'water': 'river', 'intermittent': 'yes' },
+	'Flomløpkant':			{ 'intermittent': 'yes' },  # Incomplete river objects; fix manually in JOSM
 	'Foss':					{ 'waterway': 'waterfall' },
 	'Golfbane':				{ 'leisure': 'golf_course' },
 	'Gravplass':			{ 'landuse': 'cemetery' },
@@ -938,7 +939,7 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 				stream_count += 1			
 
 	if data_category == "Arealdekke":
-		count_type = load_quay_breakwater(zip_file, filename)
+		count_type = load_man_made_features(zip_file, filename)
 		object_count.update(count_type)
 
 	file_in.close()
@@ -960,11 +961,11 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 
 
 
-# Load separate file for quays and breakwaters while zip folder is still open
+# Load separate file for man made features while zip folder is still open
 
-def load_quay_breakwater(zip_file, filename):
+def load_man_made_features(zip_file, filename):
 
-	message ("\tLoading quays and breakwaters ... ")
+	message ("\tLoading man made features ... ")
 
 	filename2 = filename.replace("Kartdata", "BygningerOgAnlegg")
 	file = zip_file.open(filename2 + ".gml")
@@ -973,27 +974,44 @@ def load_quay_breakwater(zip_file, filename):
 	file.close()
 	root = tree.getroot()
 	count_load = 0
-	count_merged = 0
 	count_objects = {}
 
 	for feature in root:
 		if "featureMember" in feature.tag:
 			feature_type = feature[0].tag[ len(ns_app)+2 : ]
 
-			if feature_type in ["KaiBrygge", "Molo"]:
+			if feature_type in ["KaiBrygge", "Molo", "Dam"]:
+
 				geometry_type, coordinate_type, properties, coordinates = parse_feature(feature)
-				coordinate_set = set(coordinates)
 				count_load += 1
 				if feature_type not in count_objects:
 					count_objects[ feature_type ] = 0
 				count_objects[ feature_type ] += 1
 
-				for segment in segments:
-					if set(segment['coordinates']).issubset(coordinate_set):
-						segment['tags'].update(osm_tags[ feature_type ])
-						count_merged += 1
+				if feature_type in ["KaiBrygge", "Molo"]:
+					coordinate_set = set(coordinates)
 
-	message ("%i loaded, merged in %i segments\n" % (count_load, count_merged))
+					for segment in segments:
+						if set(segment['coordinates']).issubset(coordinate_set):
+							segment['tags'].update(osm_tags[ feature_type ])
+
+				elif feature_type == "Dam":
+					gml_id = feature[0].attrib["{%s}id" % ns_gml]
+					entry = {
+						'object': feature_type,
+						'type': coordinate_type,
+						'gml_id': gml_id,
+						'coordinates': coordinates,
+						'members': [],
+						'tags': osm_tags[ feature_type ],
+						'extras': {
+							'objekttype': feature_type,
+							'geometri': geometry_type
+						}
+					}
+					features.append(entry)
+
+	message ("%i loaded\n" % count_load)
 	return count_objects
 
 
@@ -1072,11 +1090,14 @@ def split_polygons():
 	# Index 1 used to avoid equal 0/-1 positions
 
 	def segment_position(segment_index, patch):
-
-		if len(segments[segment_index]['coordinates']) == 2:
-			return min(patch.index(segments[segment_index]['coordinates'][0]), patch.index(segments[segment_index]['coordinates'][1]))
+		coordinates = segments[ segment_index ]['coordinates']
+		if len(coordinates) == 2:
+			if coordinates == patch[-2:] or coordinates == patch[-1:-3:-1]:  # Last two nodes
+				return len(patch)
+			else:
+				return max(patch.index(coordinates[0]), patch.index(coordinates[1]))
 		else:
-			return patch.index(segments[segment_index]['coordinates'][1])
+			return patch.index(coordinates[1])
 
 	def feature_order(feature):
 		if feature['object'] in object_sorting_order:
@@ -1181,6 +1202,7 @@ def split_polygons():
 	message ("\r\t%i splits\n" % split_count)
 
 	if simplify:
+		combine_features()
 		combine_segments()
 
 	message ("\tRun time %s\n" % (timeformat(time.time() - lap)))
@@ -1326,6 +1348,151 @@ def combine_segments():
 	count_combinations += len(combinations)
 
 	message ("\tCombined %i segments into %i longer segments\n" % (count_segments, count_combinations))
+
+
+
+# Combine small wood features and rivers across FiktivDelelinje
+
+def combine_features():
+
+	max_members = 10
+
+	# Split list of members into patches, divided by the duplicates
+
+	def extract_inner (members, duplicates):
+
+		for duplicate in duplicates[:]:
+			if duplicate in members:
+				index1 = members.index(duplicate)
+				index2 = members.index(duplicate, index1 + 1)
+				members1 = members[index1 + 1 : index2]
+				members2 = members[index2 + 1 : ] + members[ : index1 ]
+				duplicates.remove(duplicate)
+				new_patches = extract_inner(members1, duplicates) + extract_inner(members2, duplicates)
+				return new_patches
+
+		if members:
+			return [ members ]
+		else:
+			return []
+
+
+	# Get coordinates for member segment
+
+	def rebuild_coordinates (members):
+
+		# Get same difrection as for old coordinates
+		new_coordinates = [ segments[ members[0] ]['coordinates'][0] ]
+		for member in members:
+			if segments[ member ]['coordinates'][0] == new_coordinates[-1]:
+				new_coordinates.extend(segments[ member ]['coordinates'][ 1 : ])
+			else:
+				new_coordinates.extend(list(reversed(segments[ member ]['coordinates']))[ 1 : ])
+		return new_coordinates
+
+
+	# Start of main function
+	# Get list of parents (features) for each segment.
+
+	for segment in segments:
+		segment['parents'] = []
+
+	for i, feature in enumerate(features):
+		if feature['type'] == "Polygon":
+			for member in feature['members'][0]:
+				segments[ member ]['parents'].append(i)
+
+	# Loop segment and combine asociated features if FiktivDelelinje is found
+
+	remove_features = []  # Will contain all features to be removed after combination
+
+	for i, segment in enumerate(segments):
+		if (segment['object'] == "FiktivDelelinje"
+				and segment['used'] > 0
+				and len(segment['parents']) == 2
+				and	(len(features[ segment['parents'][0] ]['members'][0]) <= max_members
+					or len(features[ segment['parents'][1] ]['members'][0]) <= max_members
+					or features[ segment['parents'][0] ]['object'] == "ElvBekk")):
+
+			feature1 = features[ segment['parents'][0] ]  # To keep
+			feature2 = features[ segment['parents'][1] ]  # To include in feature1
+			feature1_index = segment['parents'][0]
+			feature2_index = segment['parents'][1]
+			if len(feature2['members'][0]) > max_members:
+				feature1, feature2 = feature2, feature1
+				feature1_index, feature2_index = feature2_index, feature1_index
+
+			# Exclude features with KantUtsnitt
+			if (feature2['object'] == "Skog"
+					and	any([segments[ member ]['object'] == "KantUtsnitt" for member in feature2['members'][0]])):
+				continue
+
+			# Get new list of combined members
+
+			index1 = feature1['members'][0].index(i)
+			index2 = feature2['members'][0].index(i)
+			new_members = feature2['members'][0][ index2 + 1 : ] + feature2['members'][0][ : index2 ]
+			feature1['members'][0] = feature1['members'][0][ : index1 ] + new_members + feature1['members'][0][ index1 + 1 : ]
+
+			# Include any inner members
+
+			for j, patch in enumerate(feature2['members'][1:], 1):
+				feature1['members'].append(patch)
+				feature1['coordinates'].append(feature2['coordinates'][j])
+
+			# Rebuild parents for combined feature
+
+			for member in new_members: # feature1['members'][0]:
+				segments[ member ]['parents'].remove(feature2_index)
+				segments[ member ]['parents'].append(feature1_index)
+
+			# Complete outer ring
+
+			feature1['coordinates'][0] = rebuild_coordinates(feature1['members'][0])
+			segments[ new_members[0] ]['extras']['combined'] = "yes"
+			segment['used'] = 0
+			remove_features.append(feature2_index)
+
+			# Discover any other FiktivDelelinje in same feature
+
+			seen = set()
+			duplicates = set()
+			for member in feature1['members'][0]:
+				if segments[ member ] == "FiktivDelelinje":
+					if member in seen:
+						duplicates.add(member)
+					else:
+						seen.add(member)
+			duplicates2 = duplicates.copy()
+
+			# Identify any new inner members in outer ring
+
+			if duplicates:
+				new_patches = extract_inner(feature1['members'][0], list(duplicates))
+
+				if len(new_patches) > 1:
+					for duplicate in duplicates2:
+						segments[ duplicate ]['used'] = 0
+
+					new_patches.sort(key=len, reverse=True)  # Longest first
+
+					new_coordinates = []
+					for patch in new_patches:
+						new_coordinates.append(rebuild_coordinates(patch))
+
+					feature1['members'][0] = new_patches[0]
+					feature1['coordinates'][0] = new_coordinates[0]
+					for j, patch in enumerate(new_patches[1:], 1):
+						feature1['members'].append(patch)
+						feature1['coordinates'].append(new_coordinates[j])
+
+	# Remove features, starting at end of feature list
+
+	remove_features.sort(reverse=True)
+	for i in remove_features:
+		del features[ i ]
+
+	message ("\tCombined %i features\n" % len(remove_features))
 
 
 
@@ -1513,9 +1680,8 @@ def remove_short_segments():
 
 def find_islands():
 
-	message ("Find islands...\n")
+	message ("Detect islands...\n")
 
-	lap = time.time()
 	island_count = 0
 
 	# Part 1: Identify islands described by inner parts of lakes and sea
@@ -1690,7 +1856,6 @@ def find_islands():
 			features.remove(feature)
 
 	message ("\t%i islands\n" % island_count)
-	message ("\tRun time %s\n" % (timeformat(time.time() - lap)))
 
 
 
@@ -2506,9 +2671,30 @@ def simplify_geometry():
 	if old_count > 0:
 		removed = 100.0 * (old_count - new_count) / old_count
 	else:
-		removed = 0	
+		removed = 0
 
-	message ("%i nodes removed (%i%%)\n" % (old_count - new_count, removed))
+	# Check polygons which may have collapsed
+
+	feature_count = 0
+	for feature in features[:]:
+		if feature['type'] == "Polygon":
+			for i, patch in enumerate(feature['members'][:]):
+				if len(patch) == 2 and len(set(segments[ patch[0] ]['coordinates'] + segments[ patch[1] ]['coordinates'])) == 2:
+					for j in [0,1]:
+						segments[ patch[j] ]['used'] -= 1
+						if ("FXIME" in segments[ patch[j] ]['tags']
+								and segments[ patch[j] ]['tags']['FIXME'] == "Merge"):
+							del segments[ patch[j] ]['tags']['FIXME']
+					del feature['members'][i]
+					del feature['coordinates'][i]
+					feature_count += 1
+			if not feature['members']:
+				features.remove(feature)
+
+	message ("%i nodes removed (%i%%)" % (old_count - new_count, removed))
+	if feature_count:
+		message (", %i features removed" % feature_count)
+	message ("\n")
 
 
 
