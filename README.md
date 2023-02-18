@@ -17,7 +17,7 @@ Paramters:
   * <code>Stedsnavn</code> - Place names (no OSM tagging). Please use the [SSR import](https://wiki.openstreetmap.org/wiki/No:Import_av_stedsnavn_fra_SSR2) instead.
 * *options*:
   * <code>-nosimplify</code> - Do not simplify geometry lines before output.
-  * <code>-short</code> - Remove short segments <2 meters.
+  * <code>-short</code> - Remove short segments <2 meters (experimental).
   * <code>-debug</code> - Include extra tags and lines for debugging, including original N50 tags.
   * <code>-tag</code> - Include original N50 tags.
   * <code>-geojson</code> - Output raw N50 data in geojson format file.
@@ -64,6 +64,7 @@ Paramters:
 ### Changelog
 
 n50osm.py
+* 1.4: Add waterway=dam and intermittent rivers ("flomløpsgrense", requires manual editing); combine small wood polygons and river grids.
 * 1.3: Improved name=* suggestions, including with N100 ranking; Longer coastline ways/fewer relations.
 * 1.2: Short ways combined into longer ways; More intuitive sorting of relationship members.
 * 1.1: Simplified program arguments; use best UTM zone; remove short segments <2m; include quays and breakwaters; include nodes for alternative SSR names.
