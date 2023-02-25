@@ -1941,7 +1941,7 @@ def get_elevation(input_nodes):
 				count_missing += 1
 				elevations[ (node['x'],node['y']) ] = None  # Only coastline points observed
 #				message (" *** NO DTM ELEVATION: %s \n" % str(node))
-				create_point((node['x'],node['y']), {'ele': 'Missing'}, object_type = "DTM")
+				create_point((node['x'],node['y']), {'ele': 'Missing'})
 
 	if isinstance(input_nodes, tuple):
 		return elevations[ input_nodes ]
