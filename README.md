@@ -63,6 +63,7 @@ Paramters:
 ### Changelog
 
 n50osm.py
+* 1.6: Improved verification of stream/river direction.
 * 1.5: Remove artifacts in polygon connections; More robust combination of polygons; Remove -short option (replaced by new code). 
 * 1.4: Add waterway=dam and intermittent rivers ("flomløpsgrense", requires manual editing); combine small wood polygons and river grids.
 * 1.3: Improved name=* suggestions, including with N100 ranking; Longer coastline ways/fewer relations.
