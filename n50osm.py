@@ -16,7 +16,7 @@ from xml.etree import ElementTree as ET
 import utm
 
 
-version = "1.5.0"
+version = "1.6.0"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -237,7 +237,7 @@ def tag_object(feature_type, geometry_type, properties, feature):
 	# Additional tagging based on object properties from GML
 
 	if "høyde" in properties:
-		tags['ele'] = properties['høyde']
+		tags['ele'] = properties['høyde']  # No decimals
 	if "lavesteRegulerteVannstand" in properties:
 		tags['ele:min'] = properties['lavesteRegulerteVannstand']
 	if "vatnLøpenummer" in properties:
@@ -805,6 +805,9 @@ def parse_feature(feature):
 							coordinates.extend( split_patch( polygon ) )
 					else:
 						message("\t*** EMPTY POLYGON PATCH: %s  %s\n" % (role, gml_id))
+						if role == "exterior":
+							coordinates = []
+							break
 
 			elif ns_gml in geo.tag:
 				message ("\t*** UNKNOWN GEOMETRY: %s\n" % geo.tag)
@@ -887,6 +890,9 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 				continue
 
 			geometry_type, coordinate_type, properties, coordinates = parse_feature(feature)
+
+			if not coordinates:
+				continue
 
 			# Only keep ÅpentOmråde features needed for geometry simplification later
 
@@ -1916,37 +1922,52 @@ def get_elevation(input_nodes):
 				node_list.append(node)
 
 	count_missing = 0
+	count_total = len(node_list)
 
-	for i in range(0, len(node_list), 50):
-		message ("\r\t%i " % ((len(node_list) - i)//50 * 50))
+	dtm1_list = []
+	lake_list = []
 
-		nodes_string = json.dumps(node_list[ i : i + 50 ]).replace(" ", "")
-		url = "https://ws.geonorge.no/hoydedata/v1/datakilder/dtm1/punkt?punkter=%s&geojson=false&koordsys=4258" % nodes_string
-		request = urllib.request.Request(url, headers=header)
+	for endpoint in ["datakilder/dtm1/punkt", "punkt"]:
 
-		try:
-			file = urllib.request.urlopen(request)
-		except urllib.error.HTTPError as err:
-			message("\r\t\t*** %s\n" % err)
-			return None
+		endpoint_list = node_list[:]
+		node_list = []
 
-		result = json.load(file)
-		file.close()
+		for i in range(0, len(endpoint_list), 50):
+			message ("\r\t%i " % ((len(endpoint_list) - i)//50 * 50))
 
-		for node in result['punkter']:
-			if node['z'] is not None:
-				elevations[ (node['x'],node['y']) ] = node['z']  # Store for possible identical request later
-				create_point((node['x'],node['y']), {'ele': '%.2f dtm' % node['z']})
-			else:
-				count_missing += 1
-				elevations[ (node['x'],node['y']) ] = None  # Only coastline points observed
-#				message (" *** NO DTM ELEVATION: %s \n" % str(node))
-				create_point((node['x'],node['y']), {'ele': 'Missing'})
+			nodes_string = json.dumps(endpoint_list[ i : i + 50 ]).replace(" ", "")
+			url = "https://ws.geonorge.no/hoydedata/v1/%s?punkter=%s&geojson=false&koordsys=4258" % (endpoint, nodes_string)
+			request = urllib.request.Request(url, headers=header)
+
+			try:
+				file = urllib.request.urlopen(request)
+			except urllib.error.HTTPError as err:
+				message("\r\t\t*** %s\n" % err)
+				return None
+
+			result = json.load(file)
+			file.close()
+
+			for node in result['punkter']:
+				point = ( node['x'], node['y'] )
+				if node['z'] is not None:
+					elevations[ point ] = node['z']  # Store for possible identical request later
+					if "datakilde" not in node and "dtm1" in endpoint:
+						node['datakilde'] = "dtm1"
+					create_point(point, {'ele': '%.2f %s' % (node['z'], node['datakilde'])})
+
+				elif endpoint == "punkt":  # Last pass
+					count_missing += 1
+					elevations[ point ] = None  # Some coastline points + Areas in North with missing DTM
+	#				message (" *** NO DTM ELEVATION: %s \n" % str(node))
+					create_point(point, {'ele': 'Missing'})  #, object_type = "DTM")
+				else:
+					node_list.append(point)  # One more try in next pass
 
 	if isinstance(input_nodes, tuple):
 		return elevations[ input_nodes ]
 
-	if count_missing == len(node_list) and len(node_list) > 10:
+	if count_missing == count_total and count_total > 10:
 		message ("\r\t*** NO ELEVATIONS FOUND - Perhaps API is currently down\n")
 	elif count_missing > 0:
 		message ("\r\t%i elevations not found\n" % count_missing)
@@ -1969,7 +1990,7 @@ def fix_stream_direction():
 		if end_junction in branch:  # Self-intersecting branch
 			return False
 
-		if "decline" in stream:
+		if "decline" in stream:  # Stream has confirmed direction
 			if end_junction == junctions[ stream['coordinates'][-1] ]['id']:  # Correct order
 				return True
 			else:
@@ -2055,12 +2076,14 @@ def fix_stream_direction():
 	for feature in features:
 		if feature['object'] in ["Innsjø", "InnsjøRegulert", "ElvBekk"] and feature['type'] == "Polygon":
 			lake_streams = []
+			lake_junctions = set()
 
 			# Discover all connections between streams and lake
 			for polygon in feature['coordinates']:
-				lake_junctions = junction_set.intersection(polygon)
-				if lake_junctions:
-					for node in lake_junctions:
+				patch_junctions = junction_set.intersection(polygon)
+				if patch_junctions:
+					lake_junctions.update(patch_junctions)
+					for node in patch_junctions:
 						for stream  in junctions[ node ]['streams']:
 							if stream not in lake_streams:
 								lake_streams.append(stream)
@@ -2072,6 +2095,9 @@ def fix_stream_direction():
 				for node in lake_junctions:
 					junctions[ node ]['streams'] = lake_streams
 					junctions[ node ]['id'] = junction_id
+					if feature['object'] in ["Innsjø", "InnsjøRegulert"] and "ele" in feature:
+						junctions[ node ]['ele'] = feature['ele']
+						elevations[ node ] = feature['ele']  # Use lake elevation for all connected streams
 
 	for node in junctions:
 		create_point(node, {'junction': '[%i]' % junctions[node]['id']})
@@ -2120,14 +2146,15 @@ def fix_stream_direction():
 				feature['decline'] = ele_start - ele_end
 				feature['extras']['direction'] = "%.2f" % (ele_start - ele_end)
 
-	# 2nd pass: Traverse stream "network" and try determining direction based on connected streams
+	# 2nd pass: Traverse stream "network" from stream with known direction and try determining direction of connected streams
 
 	for feature in streams:
 		if "decline" in feature:
+			start_junction = junctions[ feature['coordinates'][0] ]['id']
+			end_junction = junctions[ feature['coordinates'][-1] ]['id']
+			min_ele = elevations[ feature['coordinates'][-1] ]
 			for stream in junctions[ feature['coordinates'][0] ]['streams']:
-				start_junction = junctions[ feature['coordinates'][0] ]['id']
-				end_junction = junctions[ feature['coordinates'][-1] ]['id'] 
-				traverse_streams(start_junction, stream, elevations[ feature['coordinates'][-1] ], [ end_junction ])
+				traverse_streams(start_junction, stream, min_ele, [ end_junction ])
 
 	# Finally, tag fixme for remaining streams which have undetermined direction
 
@@ -2308,9 +2335,10 @@ def get_place_names():
 	folder_filename = os.path.expanduser(ssr_folder + filename)
 
 	if os.path.isfile(filename) or os.path.isfile(folder_filename):
-		ssr_source = "ssr2osm"
+		ssr_source = "ssr2osm in CURRENT working folder"
 		if not os.path.isfile(filename):
 			filename = folder_filename
+			ssr_source = "ssr2osm"
 		file = open(filename)
 		data = json.load(file)
 		file.close()
@@ -2406,9 +2434,9 @@ def get_place_names():
 			area = abs(multipolygon_area(feature['coordinates']))
 			feature['extras']['area'] = str(int(area))
 
-			# Get lake's elevation if missing, and if lake is larger than threshold
+			# Get lake's elevation if missing
 
-			if lake_ele and ("ele" not in feature['tags'] and area >= lake_ele_size or debug):  # and lake_node
+			if lake_ele:
 
 				# Check that name coordinate is not on lake's island
 				if lake_node:
@@ -2441,9 +2469,10 @@ def get_place_names():
 		for lake in lake_elevations:
 			if lake['center'] in elevations and elevations[ lake['center'] ] is not None:
 				feature = lake['feature']
+				feature['ele'] = max(elevations[ lake['center'] ], 0)
 				if "ele" not in feature['tags'] and float(feature['extras']['area']) >= lake_ele_size:
 					feature['tags']['ele'] = str(int(max(elevations[ lake['center'] ], 0)))
-				lake_ele_count += 1
+					lake_ele_count += 1
 
 	'''
 	# Create lake centroid nodes for debugging
@@ -2524,7 +2553,8 @@ def get_nve_lakes():
 				if lakes[ref]['name']:
 					feature['tags']['name'] = lakes[ref]['name']
 				if lakes[ref]['ele'] and "ele" not in feature['tags']:
-					feature['tags']['ele'] = str(lakes[ref]['ele'])
+					feature['tags']['ele'] = str(lakes[ref]['ele'])  # No decimals
+#					feature['ele'] = lakes[ref]['ele']
 				if lakes[ref]['area'] > 1 and "water" not in feature['tags']:
 					feature['tags']['water'] = "lake"
 				if lakes[ref]['mag_id']:
@@ -2707,8 +2737,8 @@ def save_osm(filename):
 	for node in nodes:
 		osm_id -= 1
 		osm_node = ET.Element("node", id=str(osm_id), action="modify", lat=str(node[1]), lon=str(node[0]))
-		if debug:
-			osm_node.append(ET.Element("tag", k="REF", v=str(osm_id)))
+#		if debug:
+#			osm_node.append(ET.Element("tag", k="REF", v=str(osm_id)))
 
 		osm_root.append(osm_node)
 		osm_node_ids[ node ] = osm_id
@@ -2902,13 +2932,13 @@ if __name__ == '__main__':
 	else:
 		split_polygons()
 		if data_category == "Arealdekke":
+			find_islands()  # Note: "Havflate" is removed at the end of this process
 			if get_nve:
 				get_nve_lakes()
-			if turn_stream:
-				fix_stream_direction()
-			find_islands()  # Note: "Havflate" is removed at the end of this process
 			if get_name:
 				get_place_names()
+			if turn_stream:
+				fix_stream_direction()
 		match_nodes()
 		save_osm(output_filename + ".osm")
 
