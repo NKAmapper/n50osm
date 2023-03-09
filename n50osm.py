@@ -16,7 +16,7 @@ from xml.etree import ElementTree as ET
 import utm
 
 
-version = "1.6.0"
+version = "1.6.1"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -1708,94 +1708,115 @@ def find_islands():
 
 
 	# Part 2: Identify remaining islands
-	# Note: This section will also find all lakes, so check coastline direction
+	# First check islands in sea, then check islands which are combinations of rivers, lekes and/or sea (in river deltas)
 
-	# First build unordered list of segment coastline
+	used_segments = []
 
-	coastlines = []
-	for feature in features:
-		if feature['object'] in ["Havflate", "Innsjø", "InnsjøRegulert", "ElvBekk", "FerskvannTørrfall"] and \
-				len(feature['members']) > 0:
-			for member in feature['members'][0]:  # Only outer patch
-				segment = segments[ member ]
-				if segment['object'] in ["HavElvSperre", "HavInnsjøSperre", "InnsjøInnsjøSperre", \
-										"InnsjøElvSperre", "FerskvannTørrfallkant", "FiktivDelelinje"]:
-					for member2 in feature['members'][0]:
-						segment2 = segments[ member2 ]
-						if segment2['object'] in ["Kystkontur", "Innsjøkant", "InnsjøkantRegulert", "ElvBekkKant"]:
-							coastlines.append(segment2)
-					break
+	for part in ["coastline", "coastline/river/water"]:
+		coastlines = []
 
-	# Merge coastline segments until exhausted
+		# First build unordered list of segment coastline
 
-	while coastlines: 
-		segment = coastlines[0]
-		island = [ coastlines[0] ]
-		coastlines.pop(0)
-		first_node = segment['coordinates'][0]
-		last_node = segment['coordinates'][-1]
+		if part == "coastline":
+			# Pass 2a: First check natural=coastline only (seawater)
+			# Example: Senja (which also has rivers)
 
-		# Build coastline/island forward
+			for feature in features:
+				if feature['object'] == "Havflate" and len(feature['members']) > 0:
+					for member in feature['members'][0]:  # Only outer patch
+						segment = segments[ member ]
+						if segment['object'] in ["Kystkontur", "HavElvSperre", "HavInnsjøSperre"]:
+							coastlines.append(segment)
 
-		found = True
-		while found and first_node != last_node:
-			found = False
-			for segment in coastlines[:]:
-				if segment['coordinates'][0] == last_node:
-					last_node = segment['coordinates'][-1]
-					island.append(segment)
-					coastlines.remove(segment)
-					found = True
-					break
+		else:
+			# Pass 2b: Then check combinations of lakes, rivers and coastline
+			# Examples: Kråkerøy (Fredrikstad), Holmen (Drammen), Øyna (Iveland)
 
-		# Add island to features list if closed chain of ways
+			for feature in features:
+				if (feature['object'] in ["Havflate", "Innsjø", "InnsjøRegulert", "ElvBekk", "FerskvannTørrfall"]
+						and len(feature['members']) > 0
+						and any(segments[ member ]['object'] in ["HavElvSperre", "HavInnsjøSperre", "InnsjøInnsjøSperre",
+															"InnsjøElvSperre", "FerskvannTørrfallkant", "FiktivDelelinje"]
+								for member in feature['members'][0])):  # Only features which are connected
 
-		if first_node == last_node:
+					for member in feature['members'][0]:  # Only outer patch
+						segment = segments[ member ]
+						if (segment['object'] in ["Kystkontur", "Innsjøkant", "InnsjøkantRegulert", "ElvBekkKant"]
+								and member not in used_segments):  # Exclude any islands already identified
+							coastlines.append(segment)
 
-			members = []
-			coordinates = [ first_node ]
-			for segment in island:
-				members.append(segments.index(segment))
-				coordinates += segment['coordinates'][1:]	
+		# Merge coastline segments until exhausted
 
-			area = polygon_area(coordinates)
-			if area < 0:
-				continue  # Avoid lakes
+		while coastlines: 
+			segment = coastlines[0]
+			island = [ coastlines[0] ]
+			coastlines.pop(0)
+			first_node = segment['coordinates'][0]
+			last_node = segment['coordinates'][-1]
 
-			if abs(area) > island_size:
-				island_type = "island"
-			else:
-				island_type = "islet"
+			# Build coastline/island forward
 
-			# Reuse existing relation if possible
+			found = True
+			while found and first_node != last_node:
+				found = False
+				for segment in coastlines[:]:
+					if segment['coordinates'][0] == last_node:
+						last_node = segment['coordinates'][-1]
+						island.append(segment)
+						coastlines.remove(segment)
+						found = True
+						break
 
-			found = False
-			for feature in candidates:
-				if set(members) == set(feature['members'][0]):
-					feature['tags']['place'] = island_type
-					feature['extras']['area'] = str(int(abs(area)))
+			# Add island to features list if closed chain of ways
+
+			if first_node == last_node:
+
+				members = []
+				coordinates = [ first_node ]
+				for segment in island:
+					members.append(segments.index(segment))
+					coordinates += segment['coordinates'][1:]
+
+				area = polygon_area(coordinates)
+				if area < 0:
+					continue  # Avoid lakes
+
+				used_segments.extend(members)  # Exclude in next pass
+
+				if abs(area) > island_size:
+					island_type = "island"
+				else:
+					island_type = "islet"
+
+				# Reuse existing relation if possible
+
+				found = False
+				for feature in candidates:
+					if set(members) == set(feature['members'][0]):
+						feature['tags']['place'] = island_type
+						feature['extras']['area'] = str(int(abs(area)))
+						island_count += 1
+						found = True
+						break
+
+				# Else create new relation for island
+
+				if not found:
+					entry = {
+						'object': "Øy",
+						'type': 'Polygon',
+						'coordinates': [ coordinates ],
+						'members': [ members ],
+						'tags': copy.deepcopy(island[0]['tags']),
+						'extras': copy.deepcopy(island[0]['extras'])
+					}
+
+					entry['tags']['place'] = island_type
+					entry['tags'].pop("natural", None)  # Remove natural=coastline (already on segments)
+					entry['extras']['area'] = str(int(abs(area)))
+
+					features.append(entry)
 					island_count += 1
-					found = True
-					break
-
-			# Else create new relation for island
-
-			if not found:
-				entry = {
-					'object': "Øy",
-					'type': 'Polygon',
-					'coordinates': [ coordinates ],
-					'members': [ members ],
-					'tags': copy.deepcopy(island[0]['tags']),
-					'extras': copy.deepcopy(island[0]['extras'])
-				}
-
-				entry['tags']['place'] = island_type
-				entry['tags'].pop("natural", None)  # Remove natural=coastline (already on segments)
-				entry['extras']['area'] = str(int(abs(area)))
-
-				features.append(entry)
-				island_count += 1
 
 	# Remove Havflate objects, which are not used going forward
 
@@ -2432,26 +2453,41 @@ def get_place_names():
 
 			lake_node = get_ssr_name(feature, name_category)
 			area = abs(multipolygon_area(feature['coordinates']))
+			feature['area'] = area
 			feature['extras']['area'] = str(int(area))
 
-			# Get lake's elevation if missing
+			# Get lake's elevation
 
 			if lake_ele:
 
 				# Check that name coordinate is not on lake's island
 				if lake_node:
-					if not inside_multipolygon(lake_node, feature['coordinates']):
-						lake_node = None
-					else:
+					if inside_multipolygon(lake_node, feature['coordinates']):
 						feature['extras']['elevation'] = "Based on lake name position"
+					else:
+						lake_node = None
 
 				# If name coordinate cannot be used, try centroid
 				if lake_node is None:
 					lake_node = polygon_centroid(feature['coordinates'][0])
-					feature['extras']['elevation'] = "Based on centroid"
-					if not inside_multipolygon(lake_node, feature['coordinates']):
+					if inside_multipolygon(lake_node, feature['coordinates']):
+						feature['extras']['elevation'] = "Based on centroid"
+					else:
 						lake_node = None
-				
+
+				# If fail, try midpoints across lake
+				if lake_node is None:
+					half = len(feature['coordinates'][0]) // 2
+					for i in range(half):
+						node1 = feature['coordinates'][0][i]
+						node2 = feature['coordinates'][0][i + half]
+						lake_node = ( 0.5 * (node1[0] + node2[0]), 0.5 * (node1[1] + node2[1]) )
+						if inside_multipolygon(lake_node, feature['coordinates']):
+							feature['extras']['elevation'] = "Based on midpoint across lake"
+							break
+						else:
+							lake_node = None
+
 				# If all fail, just use coordinate of first node on lake perimeter
 				if lake_node is None:
 					lake_node = feature['coordinates'][0][0]
@@ -2470,7 +2506,7 @@ def get_place_names():
 			if lake['center'] in elevations and elevations[ lake['center'] ] is not None:
 				feature = lake['feature']
 				feature['ele'] = max(elevations[ lake['center'] ], 0)
-				if "ele" not in feature['tags'] and float(feature['extras']['area']) >= lake_ele_size:
+				if "ele" not in feature['tags'] and feature['area'] >= lake_ele_size:
 					feature['tags']['ele'] = str(int(max(elevations[ lake['center'] ], 0)))
 					lake_ele_count += 1
 
