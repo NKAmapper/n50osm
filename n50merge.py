@@ -1,4 +1,4 @@
-##!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf8
 
 
@@ -12,7 +12,7 @@ import os.path
 from xml.etree import ElementTree as ET
 
 
-version = "1.0.0"
+version = "1.1.0"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -22,9 +22,12 @@ import_folder = "~/Jottacloud/osm/n50/"  # Folder containing import highway file
 
 n50_parts = ['coastline', 'water', 'wood', 'landuse']
 
-bbox_margin = 1  # meters
+max_diff = 50        # Maximum permitted difference i meters when matching areas/lines
+min_equal_area = 50  # Minimum percent Hausdorff hits within max_diff, for areas
+min_equal_line = 30  # Minimum percent Hausdorff hits within max_diff, for lines
+max_wood_merge = 10  # Maximum relation members when merging wood relations
+max_node_match = 10000000  # Maximum number of matches between nodes (used by Hausdorff and swap_nodes)
 
-merge_osm_ways = False
 debug = False
 
 
@@ -226,7 +229,19 @@ def coordinate_offset (node, distance):
 # https://publik.tuwien.ac.at/files/PubDat_247739.pdf
 # Amended for given maximum distance limit, to return percent of hits within given limit and to work for both polygons and lines.
 
-def hausdorff_distance (p1, p2, limit = False, percent = False, polygon=False):
+def hausdorff_distance (polygon1, polygon2, limit = False, percent = False, polygon=False):
+
+	# Simplify polygons if needed due to size
+
+	if percent and len(polygon1) * len(polygon2) > max_node_match:
+		step = int(math.sqrt(max_node_match))
+		p1 = polygon1[: -1 : 1 + len(polygon1) // step ] + [ polygon1[-1] ]
+		p2 = polygon1[: -1 : 1 + len(polygon2) // step ] + [ polygon2[-1] ]
+	else:
+		p1 = polygon1
+		p2 = polygon2
+
+	# Start of function
 
 	count_hits = 0
 	N1 = len(p1)
@@ -1039,71 +1054,110 @@ def update_tags(osm_element, n50_element):
 				n50_element['xml'].append(ET.Element("tag", k="OSM_" + key, v=value))
 
 
+
 # Match and merge given list of existing OSM nodes with given list of new N50 nodes.
 # If other_parents is True, existing OSM nodes will be relocated even if other ways/relations are using the node.
 
 def swap_nodes(old_osm_nodes, new_n50_nodes, other_parents=False):
 
-	max_distance = 50
-	swap_candidates = []
+	# Inner recursive function for splitting smaller partitions of node.
 
-	# Identify all node swaps within acceptable distance and put into sorted list
+	def swap_node_area(old_osm_nodes, new_n50_nodes):
 
-	for osm_node in old_osm_nodes:
-		if osm_node in osm_nodes and "used" not in osm_node:  # and osm_node not in swap_nodes:
-			tagged_node = any([tag not in ['source', 'created_by'] for tag in osm_nodes[ osm_node ]['tags']])
-			for n50_node in new_n50_nodes:
-				if n50_node in n50_nodes:
-					node_distance = distance(osm_nodes[ osm_node ]['coord'], n50_nodes[ n50_node ]['coord'])
-					if (node_distance < max_distance
-							and (not tagged_node or node_distance == 0)
-							and (not osm_nodes[ osm_node ]['parents'] or other_parents)
-							and "boundary" not in osm_nodes[ osm_node ]):  # Avoid swapping nodes used by boundary=* way
-						swap = {
-							'osm': osm_node,
-							'n50': n50_node,
-							'dist': node_distance
-						}
-						swap_candidates.append(swap)
-	
-	swap_candidates.sort(key=lambda d: d['dist'])
-	
-	# Swap nodes starting with the closest until exhausted
+		# Recursively split into smaller halfs until until sufficiently small number of nodes
 
-	for swap in swap_candidates:
-		osm_node = osm_nodes[ swap['osm'] ]
-		n50_node = n50_nodes[ swap['n50'] ]
+		if len(old_osm_nodes) * len(new_n50_nodes) > max_node_match:
 
-		if "used" not in osm_node and "match" not in n50_node:
-			n50_node['match'] = swap['osm']
-			osm_node['used'] = True
+			# Get which axis to split in half
 
-			# Copy node attributes except coordinates
-			for attr, value in iter(osm_node['xml'].items()):
-				if attr not in ["lat", "lon"]:
-					n50_node['xml'].set(attr, value)
+			min_bbox = [0, 0]
+			max_bbox = [0, 0]
+			for i in [0,1]:
+				min_bbox[i] = min(osm_nodes[ node ]['coord'][i] for node in old_osm_nodes)
+				max_bbox[i] = max(osm_nodes[ node ]['coord'][i] for node in old_osm_nodes)				
 
-			if swap['dist'] == 0:
-				del n50_node['xml'].attrib['action']
+			if distance(min_bbox, (min_bbox[0], max_bbox[1])) > distance(min_bbox, (max_bbox[0], min_bbox[1])):
+				axis = 1
+			else:
+				axis = 0
 
-			osm_root.remove(osm_node['xml'])
+			center = 0.5 * (max_bbox[ axis ] + min_bbox[ axis ])
 
-			# Copy tags
-			for element in osm_node['xml']:
-				if "source" not in element.attrib['k'] and element.attrib['k'] != "created_by":
-					n50_node['xml'].append(element)
+			# Split nodes and recursively swap
 
-			# Update references to swapped nodes
-			for way_id in n50_node['parents']:
-				if way_id in n50_ways:
-					way = n50_ways[ way_id ]
-					for i, node in enumerate(way['nodes'][:]):
-						if node == swap['n50']:
-							way['nodes'][i] = swap['osm']
-							node_xml = way['xml'].find("nd[@ref='%s']" % swap['n50'])
-							node_xml.set("ref", swap['osm'])
+			old_osm_nodes1 = [ node for node in old_osm_nodes if osm_nodes[ node ]['coord'][ axis ] < center ]
+			old_osm_nodes2 = [ node for node in old_osm_nodes if osm_nodes[ node ]['coord'][ axis ] >= center ]
+			new_n50_nodes1 = [ node for node in new_n50_nodes if n50_nodes[ node ]['coord'][ axis ] < center ]
+			new_n50_nodes2 = [ node for node in new_n50_nodes if n50_nodes[ node ]['coord'][ axis ] >= center ]
 
-			osm_node['parents'].update(n50_node['parents'])
+			swap_node_area(old_osm_nodes1, new_n50_nodes1)
+			swap_node_area(old_osm_nodes2, new_n50_nodes2)
+
+			return
+
+		# Identify all node swaps within acceptable distance and put into sorted list
+
+		swap_candidates = []
+		for osm_node in old_osm_nodes:
+			if osm_node in osm_nodes and "used" not in osm_node:  # and osm_node not in swap_nodes:
+				tagged_node = any([tag not in ['source', 'created_by'] for tag in osm_nodes[ osm_node ]['tags']])
+				for n50_node in new_n50_nodes:
+					if n50_node in n50_nodes:
+						node_distance = distance(osm_nodes[ osm_node ]['coord'], n50_nodes[ n50_node ]['coord'])
+						if (node_distance < max_diff
+								and (not tagged_node or node_distance == 0)
+								and (not osm_nodes[ osm_node ]['parents'] or other_parents)
+								and "boundary" not in osm_nodes[ osm_node ]):  # Avoid swapping nodes used by boundary=* way
+							swap = {
+								'osm': osm_node,
+								'n50': n50_node,
+								'dist': node_distance
+							}
+							swap_candidates.append(swap)
+		
+		swap_candidates.sort(key=lambda d: d['dist'])
+		
+		# Swap nodes starting with the closest until exhausted
+
+		for swap in swap_candidates:
+			osm_node = osm_nodes[ swap['osm'] ]
+			n50_node = n50_nodes[ swap['n50'] ]
+
+			if "used" not in osm_node and "match" not in n50_node:
+				n50_node['match'] = swap['osm']
+				osm_node['used'] = True
+
+				# Copy node attributes except coordinates
+				for attr, value in iter(osm_node['xml'].items()):
+					if attr not in ["lat", "lon"]:
+						n50_node['xml'].set(attr, value)
+
+				if swap['dist'] == 0:
+					del n50_node['xml'].attrib['action']
+
+				osm_root.remove(osm_node['xml'])
+
+				# Copy tags
+				for element in osm_node['xml']:
+					if "source" not in element.attrib['k'] and element.attrib['k'] != "created_by":
+						n50_node['xml'].append(element)
+
+				# Update references to swapped nodes
+				for way_id in n50_node['parents']:
+					if way_id in n50_ways:
+						way = n50_ways[ way_id ]
+						for i, node in enumerate(way['nodes'][:]):
+							if node == swap['n50']:
+								way['nodes'][i] = swap['osm']
+								node_xml = way['xml'].find("nd[@ref='%s']" % swap['n50'])
+								node_xml.set("ref", swap['osm'])
+
+				osm_node['parents'].update(n50_node['parents'])
+
+
+	# Start of main function
+
+	swap_node_area(old_osm_nodes, new_n50_nodes)  # Start recurisive partition into smaller areas to match
 
 	# Delete remaining OSM nodes unless tagged
 
@@ -1123,11 +1177,12 @@ def merge_area(osm_object, n50_object):
 
 	# Internal function for swapping ways
 
-	def swap_ways(n50_id, osm_id):
+	def swap_way(n50_id, osm_id):
 
 		n50_way = n50_ways[ n50_id ]
 		osm_way = osm_ways[ osm_id ]
 
+		# Update relations where n50_way is used
 		for parent in n50_way['parents']:
 			parent_xml = n50_relations[ parent ]['xml'].find("member[@ref='%s']" % n50_id)
 			parent_xml.set("ref", osm_id)
@@ -1148,25 +1203,40 @@ def merge_area(osm_object, n50_object):
 
 	def match_ways(osm_members, n50_members, max_parents):
 
+		for member in n50_members:
+			if member in n50_ways:
+				n50_way = n50_ways[ member ]
+				n50_way['min_bbox'], n50_way['max_bbox'] = get_bbox(n50_way['coordinates'])
+
 		# Build sorted list of swap candidates
 
 		swap_candidates = []
 
 		for osm_member in osm_members:
-			if "used" not in osm_ways[ osm_member ] and len(osm_ways[ osm_member ]['parents']) <= max_parents:
-				for n50_member in n50_members:
-					if (n50_member in n50_ways
-							and "match" not in n50_ways[ n50_member ]
-							and not ("FIXME" in n50_ways[ n50_member ]['tags']
-									and n50_ways[ n50_member ]['tags']['FIXME'] == "Merge")):
-						hausdorff = hausdorff_distance(osm_ways[ osm_member ]['coordinates'], n50_ways[ n50_member ]['coordinates'])
+			osm_way = osm_ways[ osm_member ]
+			if "used" not in osm_way and len(osm_way['parents']) <= max_parents:
 
-						swap = {
-							'osm': osm_member,
-							'n50': n50_member,
-							'dist': hausdorff
-						}
-						swap_candidates.append(swap)
+				min_bbox, max_bbox = get_bbox(osm_way['coordinates'])
+				min_bbox = coordinate_offset(min_bbox, - 2 * max_diff)
+				max_bbox = coordinate_offset(max_bbox, 2 * max_diff)
+
+				for n50_member in n50_members:
+					if n50_member in n50_ways:
+						n50_way = n50_ways[ n50_member ]
+						if ("match" not in n50_way
+								and not ("FIXME" in n50_way['tags']
+										and n50_way['tags']['FIXME'] == "Merge")
+								and min_bbox[0] < n50_way['max_bbox'][0] and max_bbox[0] > n50_way['min_bbox'][0]
+								and min_bbox[1] < n50_way['max_bbox'][1] and max_bbox[1] > n50_way['min_bbox'][1]):  # Intersecting bbox
+
+							hausdorff = hausdorff_distance(osm_way['coordinates'], n50_way['coordinates'])
+
+							swap = {
+								'osm': osm_member,
+								'n50': n50_member,
+								'dist': hausdorff
+							}
+							swap_candidates.append(swap)
 	
 		swap_candidates.sort(key=lambda d: d['dist'])
 
@@ -1195,12 +1265,15 @@ def merge_area(osm_object, n50_object):
 	def remove_ways_not_used(osm_members):
 
 		for member in osm_members:
-			if "used" not in osm_ways[ member ]:
-				if osm_object['id'] in osm_ways[ member ]['parents']:
-					osm_ways[ member ]['parents'].remove(osm_object['id'])
-				if not osm_ways[ member ]['parents'] and osm_ways[ member ]['xml'].find("tag") is None:  # No tags
-					osm_ways[ member ]['xml'].set("action", "delete")				
-					osm_ways[ member ]['used'] = True	
+			osm_way = osm_ways[ member ]
+			if "used" not in osm_way:
+				if osm_object['id'] in osm_way['parents']:
+					osm_way['parents'].remove(osm_object['id'])
+				if (not osm_way['parents']
+						and not any(key not in ["source", "source:date"] or key == "natural" and osm_way['tags']['natural'] != "coastline"
+										for key in osm_way['tags'])):
+					osm_way['xml'].set("action", "delete")				
+					osm_way['used'] = True
 
 
 	# Main function starts.
@@ -1216,7 +1289,7 @@ def merge_area(osm_object, n50_object):
 
 		swap_candidates = match_ways([ osm_object['id'] ], [ n50_object['id'] ], 0)  # One match possible
 		if swap_candidates:
-			swap_ways(swap_candidates[0]['n50'], swap_candidates[0]['osm'])
+			swap_way(swap_candidates[0]['n50'], swap_candidates[0]['osm'])
 		else:
 			remove_ways_not_used([ osm_object['id'] ])
 		update_tags(osm_way, n50_way)
@@ -1227,7 +1300,7 @@ def merge_area(osm_object, n50_object):
 
 		swap_candidates = match_ways([ osm_object['id'] ], n50_relation['members'], 0)
 		if swap_candidates:
-			swap_ways(swap_candidates[0]['n50'], swap_candidates[0]['osm'])
+			swap_way(swap_candidates[0]['n50'], swap_candidates[0]['osm'])
 		else:
 			remove_ways_not_used([ osm_object['id'] ])
 		update_tags(osm_way, n50_relation)
@@ -1238,7 +1311,7 @@ def merge_area(osm_object, n50_object):
 		
 		swap_candidates = match_ways(osm_relation['members'], [ n50_object['id'] ], 1)
 		if swap_candidates:
-			swap_ways(swap_candidates[0]['n50'], swap_candidates[0]['osm'])
+			swap_way(swap_candidates[0]['n50'], swap_candidates[0]['osm'])
 
 		remove_ways_not_used(osm_relation['members'])
 		update_tags(osm_relation, n50_way)
@@ -1251,7 +1324,7 @@ def merge_area(osm_object, n50_object):
 		swap_candidates = match_ways(osm_relation['members'], n50_relation['members'], 1)
 		for swap in swap_candidates:
 			if "used" not in osm_ways[ swap['osm'] ] and "match" not in n50_ways[ swap['n50'] ]:
-				swap_ways(swap['n50'], swap['osm'])
+				swap_way(swap['n50'], swap['osm'])
 
 		remove_ways_not_used(osm_relation['members'])
 		update_tags(osm_relation, n50_relation)
@@ -1330,8 +1403,8 @@ def merge_topo():
 		count_down -= 1
 
 		if osm_object['topo']:
-			min_bbox = coordinate_offset(osm_object['min_bbox'], -50)
-			max_bbox = coordinate_offset(osm_object['max_bbox'], 50)
+			min_bbox = coordinate_offset(osm_object['min_bbox'], - max_diff)
+			max_bbox = coordinate_offset(osm_object['max_bbox'], max_diff)
 
 			best_match = None
 			min_hausdorff = 99999999
@@ -1344,13 +1417,17 @@ def merge_topo():
 						and min_bbox[0] < n50_object['max_bbox'][0] and max_bbox[0] > n50_object['min_bbox'][0]
 						and min_bbox[1] < n50_object['max_bbox'][1] and max_bbox[1] > n50_object['min_bbox'][1]):  # Intersecting bbox
 
-					hausdorff, hits = hausdorff_distance(osm_object['coordinates'], n50_object['coordinates'], limit=50, percent=True, polygon=True)
+					if len(osm_object['coordinates']) * len(n50_object['coordinates']) > max_node_match:
+						message ("  *** Wait, processing large object (%i nodes)\n"
+									% (max(len(osm_object['coordinates']), len(n50_object['coordinates']))))
+
+					hausdorff, hits = hausdorff_distance(osm_object['coordinates'], n50_object['coordinates'], limit=max_diff, percent=True, polygon=True)
 					if hits > best_hits:
 						best_match = n50_object
 						min_hausdorff = hausdorff
 						best_hits = hits				
 
-			if best_hits > 65:
+			if best_hits > min_equal_area:
 				if debug:
 					best_match['xml'].append(ET.Element("tag", k="MATCHAREA", v=str(int(min_hausdorff))))
 					best_match['xml'].append(ET.Element("tag", k="PERCENT", v=str(int(best_hits))))
@@ -1399,8 +1476,8 @@ def merge_coastline_streams():
 			count_down -= 1
 
 			min_bbox, max_bbox = get_bbox(osm_way['coordinates'])
-			min_bbox = coordinate_offset(min_bbox, -50)
-			max_bbox = coordinate_offset(max_bbox, 50)
+			min_bbox = coordinate_offset(min_bbox, - max_diff)
+			max_bbox = coordinate_offset(max_bbox, max_diff)
 
 			best_match = None
 			min_hausdorff = 99999999
@@ -1420,7 +1497,7 @@ def merge_coastline_streams():
 						min_hausdorff = hausdorff
 						best_hits = hits
 
-			if best_hits > 30:
+			if best_hits > min_equal_line:
 				merge_line(osm_way, best_match, other_parents=False)
 				count_match += 1
 
@@ -1557,12 +1634,16 @@ def merge_boundary():
 
 	def remove_relation_line(osm_way, n50_way, relation):
 
-		swap_and_delete_nodes(osm_way, n50_way)
-
 		# Determine relation members between osm_way and n50_way which will be inner members
 		outer_members = get_members(relation, "outer")
 		if n50_way['id'] not in outer_members:
 			outer_members = get_members(relation, "inner")
+
+		if osm_way['id'] not in outer_members:  # Unresolved problem in a few cases
+			message ("  *** Way %s not found among outer members\n" % osm_way['id'])
+			return
+
+		swap_and_delete_nodes(osm_way, n50_way)
 
 		index1 = outer_members.index(osm_way['id'])
 		index2 = outer_members.index(n50_way['id'])	
@@ -1571,7 +1652,7 @@ def merge_boundary():
 
 		members1 = outer_members[index1 + 1 : index2]
 		members2 = outer_members[index2 + 1 : ] + outer_members[ : index1]
-		if len(members1) < len(members2):
+		if len(members1) < len(members2):  # Todo: More robust test
 			inner_members = members1
 		else:
 			inner_members = members2
@@ -1618,7 +1699,6 @@ def merge_boundary():
 
 	# Start of main function
 
-	max_member_merge = 10
 	count_down = 0
 	count_match = 0
 
@@ -1664,7 +1744,7 @@ def merge_boundary():
 
 					# Swap line only (remove duplicate)
 					if ("wood" in n50_relation['topo']
-							and (len(n50_relation['members']) > max_member_merge and len(osm_relation['members']) > max_member_merge
+							and (len(n50_relation['members']) > max_wood_merge and len(osm_relation['members']) > max_wood_merge
 								or "grid" in osm_relation or "grid" in n50_relation)
 							and not("grid" in osm_relation and "grid" in n50_relation
 									and osm_relation['grid'] == n50_relation['grid'])):
@@ -1893,9 +1973,6 @@ if __name__ == '__main__':
 	n50_root = None
 	n50_tree = None
 
-	debug =       False  # Include debug tags and unused segments
-	osm_merge =   False  # Also merge overlapping lines in OSM only
-
 	# Parse parameters
 
 	if len(sys.argv) < 2:
@@ -1925,11 +2002,14 @@ if __name__ == '__main__':
 	if os.path.isfile(filename) or os.path.isfile(os.path.expanduser(import_folder + filename)):
 		message ("N50 filename: %s\n" % filename)
 		output_filename = filename.replace(".osm", "") + "_merged.osm"
-	elif "-osm" in sys.argv:
-		filename = ""
-		output_filename = "n50_%s_%s_merged.osm" % (municipality_id, municipality_name.replace(" ", "_"))
+#	elif "-osm" in sys.argv:
+#		filename = ""
+#		output_filename = "n50_%s_%s_merged.osm" % (municipality_id, municipality_name.replace(" ", "_"))
 	else:
 		sys.exit("\t*** File '%s' not found\n\n" % filename)
+
+	if "-debug" in sys.argv:
+		debug = True
 
 	message ("\n")
 
