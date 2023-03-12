@@ -16,7 +16,7 @@ from xml.etree import ElementTree as ET
 import utm
 
 
-version = "1.6.1"
+version = "1.6.2"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -1268,7 +1268,7 @@ def simplify_close_connections():
 
 	count = 0
 	for i, feature in enumerate(features):
-		if feature['object'] == "ÅpentOmråde" and 2 <= len(feature['members'][0]) <= 4:
+		if feature['object'] == "ÅpentOmråde" and len(feature['members']) > 0 and 2 <= len(feature['members'][0]) <= 4:
 
 			# The longest segment will be replaced
 
@@ -1311,7 +1311,7 @@ def simplify_close_connections():
 	# Delete ÅpentOmråde, not needed anymore
 
 	for feature in features[:]:
-		if feature['object'] == "ÅpentOmråde":
+		if feature['object'] == "ÅpentOmråde" and len(feature['members']) > 0:
 			for member in feature['members'][0]:
 				segments[ member ]['used'] -= 1
 			features.remove(feature)
@@ -2456,7 +2456,7 @@ def get_place_names():
 			feature['area'] = area
 			feature['extras']['area'] = str(int(area))
 
-			# Get lake's elevation
+			# Get lake's elevation with decimals from DTM1
 
 			if lake_ele:
 
