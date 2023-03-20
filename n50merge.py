@@ -12,7 +12,7 @@ import os.path
 from xml.etree import ElementTree as ET
 
 
-version = "1.1.0"
+version = "1.1.1"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -1100,7 +1100,7 @@ def swap_nodes(old_osm_nodes, new_n50_nodes, other_parents=False):
 		swap_candidates = []
 		for osm_node in old_osm_nodes:
 			if osm_node in osm_nodes and "used" not in osm_node:  # and osm_node not in swap_nodes:
-				tagged_node = any([tag not in ['source', 'created_by'] for tag in osm_nodes[ osm_node ]['tags']])
+				tagged_node = any(tag not in ['source', 'created_by'] for tag in osm_nodes[ osm_node ]['tags'])
 				for n50_node in new_n50_nodes:
 					if n50_node in n50_nodes:
 						node_distance = distance(osm_nodes[ osm_node ]['coord'], n50_nodes[ n50_node ]['coord'])
@@ -1135,7 +1135,7 @@ def swap_nodes(old_osm_nodes, new_n50_nodes, other_parents=False):
 				if swap['dist'] == 0:
 					del n50_node['xml'].attrib['action']
 
-				osm_root.remove(osm_node['xml'])
+				osm_root.remove(osm_node['xml'])  # Id has been copied to N50 node
 
 				# Copy tags
 				for element in osm_node['xml']:
@@ -1164,7 +1164,7 @@ def swap_nodes(old_osm_nodes, new_n50_nodes, other_parents=False):
 	for node in old_osm_nodes:
 		if (node in osm_nodes and "used" not in osm_nodes[ node ]
 				and not osm_nodes[ node ]['parents']
-				and not any([tag not in ['source', 'created_by'] for tag in osm_nodes[ node ]['tags']])):
+				and not any(tag not in ['source', 'created_by'] for tag in osm_nodes[ node ]['tags'])):
 			osm_nodes[ node ]['xml'].set("action", "delete")
 
 
@@ -1613,7 +1613,8 @@ def merge_boundary():
 			osm_relations[ osm_relation['match'] ]['used'] = n50_relation['id']
 			n50_relation['xml'].attrib = osm_relation['xml'].attrib  # Inherit OSM relation history
 			n50_relation['xml'].set("action", "modify")
-			n50_root.remove(osm_relation['xml'])
+			if osm_relation['xml'] in n50_root:  # Debug
+				n50_root.remove(osm_relation['xml'])
 
 		# 2nd case: N50 polygon already matched to a different OSM polygon
 		elif "match" in n50_relation and "match" not in osm_relation:
@@ -1868,10 +1869,10 @@ def remove_admin_boundary():
 	# Hide nodes belonging to ways tagged with boundary=*
 	count_node = 0
 	for node_id, node in iter(osm_nodes.items()):
-		if "used" not in node:
-			if all([parent in osm_ways and "boundary" in osm_ways[ parent ]['tags'] for parent in node['parents']]):
-				osm_root.remove(node['xml'])
-				count_node += 1
+		if ("used" not in node and node['parents']
+				and  all(parent in osm_ways and "boundary" in osm_ways[ parent ]['tags'] for parent in node['parents'])):
+			osm_root.remove(node['xml'])
+			count_node += 1
 
 	# Hide ways where all nodes are now hidden
 	count_way = 0
@@ -1881,7 +1882,7 @@ def remove_admin_boundary():
 		for node_id in way['nodes']:
 			if node_id in osm_nodes:
 				node = osm_nodes[ node_id ]
-				if "used" in node or any([parent not in osm_ways or "boundary" not in osm_ways[ parent ]['tags'] for parent in node['parents']]):
+				if "used" in node or any(parent not in osm_ways or "boundary" not in osm_ways[ parent ]['tags'] for parent in node['parents']):
 					has_node = True
 		if not way['incomplete'] and not has_node:
 			osm_root.remove(osm_ways[ way_id ]['xml'])
