@@ -16,7 +16,7 @@ from xml.etree import ElementTree as ET
 import utm
 
 
-version = "1.6.2"
+version = "1.6.3"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -2237,14 +2237,19 @@ def get_ssr_name (feature, name_categories):
 
 		# Establish alternative names for fixme tag
 		alt_names = []
+		alt_names_short = []
 		sea = ("Sjø" in found_places[0]['tags']['ssr:type'])
 		for place in found_places:
 			if not sea or "Sjø" in place['tags']['ssr:type']:
 				alt_names.append("%s [%s %s]" % (place['tags']['name'], place['tags']['ssr:type'], place['tags']['ssr:stedsnr']))
+				alt_names_short.append(place['tags']['name'])
 
 		nve = 0
 		if "name" in feature['tags']:
+			if feature['tags']['name'] in alt_names_short:
+				alt_names_short.remove(feature['tags']['name'])
 			alt_names.insert(0, "%s [NVE]" % feature['tags']['name'])
+			alt_names_short.insert(0, feature['tags']['name'])
 			nve = 1
 
 		# Name already suggested by NVE data, so get ssr:stedsnr and any alternative names
@@ -2260,6 +2265,7 @@ def get_ssr_name (feature, name_categories):
 						feature['extras']['N100'] = feature['tags'].pop("N100", None)
 					if len(alt_names) > 1 + nve:
 						feature['tags']['FIXME'] = "Verify NVE name: " + ", ".join(alt_names)
+						feature['tags']['ALT_NAME'] = ";".join(alt_names_short)
 					name_count += 1
 					break
 
@@ -2277,6 +2283,7 @@ def get_ssr_name (feature, name_categories):
 					feature['tags']['FIXME'] = "Choose N100 name: " + ", ".join(alt_names)					
 				else:
 					feature['tags']['FIXME'] = "Verify N100 name: " + ", ".join(alt_names)
+				feature['tags']['ALT_NAME'] = ";".join(alt_names_short)
 			name_count += 1
 
 		# Only one name found, or only one name of preferred type
@@ -2290,6 +2297,7 @@ def get_ssr_name (feature, name_categories):
 
 			if len(alt_names) > 1 + nve:
 				feature['tags']['FIXME'] = "Verify name: " + ", ".join(alt_names)
+				feature['tags']['ALT_NAME'] = ";".join(alt_names_short)
 			name_count += 1
 
 		# Not able to determine only one name
@@ -2301,6 +2309,7 @@ def get_ssr_name (feature, name_categories):
 			feature['tags'].update(same_places[0]['tags'])
 			feature['extras']['ssr:type'] = feature['tags'].pop("ssr:type", None)		
 			feature['tags']['FIXME'] = "Choose name: " + ", ".join(alt_names)
+			feature['tags']['ALT_NAME'] = ";".join(alt_names_short)
 
 		# Warning for equal rank names ("sidestilte navn")
 		if ";" in feature['tags']['name']:
