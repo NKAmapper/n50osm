@@ -77,6 +77,8 @@ n50osm.py
 * 0.4: Code converted to Python 3.
 
 n50merge.py
+* 1.2: Support for merging seamark:type=rock.
+* 1.1: Optiimized for merging large areas, typically large islands.
 * 1.0: Support for automatic matching and merging based on similarity of shapes.
 * 0.1: Initial limited version.
 
