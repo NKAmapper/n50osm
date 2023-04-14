@@ -12,7 +12,7 @@ import os.path
 from xml.etree import ElementTree as ET
 
 
-version = "1.1.1"
+version = "1.2.0"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -1057,14 +1057,15 @@ def update_tags(osm_element, n50_element):
 
 # Match and merge given list of existing OSM nodes with given list of new N50 nodes.
 # If other_parents is True, existing OSM nodes will be relocated even if other ways/relations are using the node.
+# If relocate_tagged is True, existing OSM nodes will be relocated even if they are tagged (used for seamark:type=rock).
 
-def swap_nodes(old_osm_nodes, new_n50_nodes, other_parents=False):
+def swap_nodes(old_osm_nodes, new_n50_nodes, other_parents=False, relocate_tagged=False):
 
 	# Inner recursive function for splitting smaller partitions of node.
 
 	def swap_node_area(old_osm_nodes, new_n50_nodes):
 
-		# Recursively split into smaller halfs until until sufficiently small number of nodes
+		# Recursively split into smaller halfs until sufficiently small number of nodes
 
 		if len(old_osm_nodes) * len(new_n50_nodes) > max_node_match:
 
@@ -1100,12 +1101,12 @@ def swap_nodes(old_osm_nodes, new_n50_nodes, other_parents=False):
 		swap_candidates = []
 		for osm_node in old_osm_nodes:
 			if osm_node in osm_nodes and "used" not in osm_node:  # and osm_node not in swap_nodes:
-				tagged_node = any(tag not in ['source', 'created_by'] for tag in osm_nodes[ osm_node ]['tags'])
+				tagged_node = any(tag not in ["source", "source:date", "created_by"] for tag in osm_nodes[ osm_node ]['tags'])
 				for n50_node in new_n50_nodes:
 					if n50_node in n50_nodes:
 						node_distance = distance(osm_nodes[ osm_node ]['coord'], n50_nodes[ n50_node ]['coord'])
 						if (node_distance < max_diff
-								and (not tagged_node or node_distance == 0)
+								and (not tagged_node or node_distance == 0 or relocate_tagged)
 								and (not osm_nodes[ osm_node ]['parents'] or other_parents)
 								and "boundary" not in osm_nodes[ osm_node ]):  # Avoid swapping nodes used by boundary=* way
 							swap = {
@@ -1116,7 +1117,8 @@ def swap_nodes(old_osm_nodes, new_n50_nodes, other_parents=False):
 							swap_candidates.append(swap)
 		
 		swap_candidates.sort(key=lambda d: d['dist'])
-		
+		count = 0
+			
 		# Swap nodes starting with the closest until exhausted
 
 		for swap in swap_candidates:
@@ -1132,14 +1134,14 @@ def swap_nodes(old_osm_nodes, new_n50_nodes, other_parents=False):
 					if attr not in ["lat", "lon"]:
 						n50_node['xml'].set(attr, value)
 
-				if swap['dist'] == 0:
+				if swap['dist'] == 0 and osm_node['tags'] == n50_node['tags']:
 					del n50_node['xml'].attrib['action']
 
 				osm_root.remove(osm_node['xml'])  # Id has been copied to N50 node
 
 				# Copy tags
 				for element in osm_node['xml']:
-					if "source" not in element.attrib['k'] and element.attrib['k'] != "created_by":
+					if element.attrib['k'] not in n50_node['tags'] and "source" not in element.attrib['k'] and element.attrib['k'] != "created_by":
 						n50_node['xml'].append(element)
 
 				# Update references to swapped nodes
@@ -1153,11 +1155,14 @@ def swap_nodes(old_osm_nodes, new_n50_nodes, other_parents=False):
 								node_xml.set("ref", swap['osm'])
 
 				osm_node['parents'].update(n50_node['parents'])
+				count += 1
+
+		return count
 
 
 	# Start of main function
 
-	swap_node_area(old_osm_nodes, new_n50_nodes)  # Start recurisive partition into smaller areas to match
+	count = swap_node_area(old_osm_nodes, new_n50_nodes)  # Start recurisive partition into smaller areas to match
 
 	# Delete remaining OSM nodes unless tagged
 
@@ -1166,6 +1171,8 @@ def swap_nodes(old_osm_nodes, new_n50_nodes, other_parents=False):
 				and not osm_nodes[ node ]['parents']
 				and not any(tag not in ['source', 'created_by'] for tag in osm_nodes[ node ]['tags'])):
 			osm_nodes[ node ]['xml'].set("action", "delete")
+
+	return count
 
 
 
@@ -1440,7 +1447,7 @@ def merge_topo():
 				osm_object['xml'].append(ET.Element("tag", k="PERCENT", v=str(int(best_hits))))
 				osm_object['xml'].set("action", "modify")
 
-	message ("\r\t \tMerged %i polygons\n" % count_match)
+	message ("\r\t  \tMerged %i polygons\n" % count_match)
 
 
 
@@ -1471,7 +1478,10 @@ def merge_coastline_streams():
 
 	for osm_way_id, osm_way in iter(osm_ways.items()):
 		if (("coastline" in osm_way['topo'] or "stream" in osm_way['topo'])
-				 and "used" not in osm_way and not osm_way['incomplete'] and not osm_way['parents']):
+				 and "used" not in osm_way
+				 and not osm_way['incomplete']
+				 and not osm_way['parents']
+				 and osm_way['coordinates'][0] != osm_way['coordinates'][-1]):
 			message ("\r\t%i " % count_down)
 			count_down -= 1
 
@@ -1501,7 +1511,7 @@ def merge_coastline_streams():
 				merge_line(osm_way, best_match, other_parents=False)
 				count_match += 1
 
-	message ("\r\t \tMerged %i lines\n" % count_match)
+	message ("\r\t  \tMerged %i lines\n" % count_match)
 
 
 
@@ -1719,7 +1729,7 @@ def merge_boundary():
 	for osm_way in iter(osm_ways.values()):
 		if (not osm_way['incomplete']
 				and "used" not in osm_way
-				and len(osm_way['parents']) == 1
+				and len(osm_way['parents']) in [1,2]  # Way could be shared between two attached objects
 				and list(osm_way['parents'])[0] in osm_relations
 				and osm_relations[ list(osm_way['parents'])[0] ]['topo']):
 			osm_candidates.append(osm_way)
@@ -1742,6 +1752,8 @@ def merge_boundary():
 
 					n50_relation = n50_relations[ list(n50_way['parents'])[0] ]
 					osm_relation = osm_relations[ list(osm_way['parents'])[0] ]
+					if not (n50_relation['topo'] & osm_relation['topo']):  # Match same topo type only
+						continue
 
 					# Swap line only (remove duplicate)
 					if ("wood" in n50_relation['topo']
@@ -1773,7 +1785,33 @@ def merge_boundary():
 
 					break					
 
-	message ("\r\t \tMerged %i boundary lines\n" % count_match)
+	message ("\r\t  \tMerged %i boundary lines\n" % count_match)
+
+
+
+# Part 4 of merge:
+# Merge seamark:type=rock nodes
+
+def merge_rocks():
+
+	# Build lists of all rocks
+
+	n50_rocks = []
+	for node_id, node in iter(n50_nodes.items()):
+		if "seamark:type" in node['tags'] and node['tags']['seamark:type'] == "rock":
+			n50_rocks.append(node_id)
+
+	osm_rocks = []
+	for node_id, node in iter(osm_nodes.items()):
+		if "seamark:type" in node['tags'] and node['tags']['seamark:type'] == "rock":
+			osm_rocks.append(node_id)	
+
+	if len(n50_rocks) > 0 and len(osm_rocks) > 0:
+		message ("\tMatching %i N50 sea rocks with %i OSM sea rocks ...\n" % (len(n50_rocks), len(osm_rocks)))
+
+		count = swap_nodes(osm_rocks, n50_rocks, other_parents=False, relocate_tagged=True)
+
+		message ("\t\t%i seamark:type=rock merged\n" % count)
 
 
 
@@ -1903,6 +1941,7 @@ def merge_n50_osm():
 	merge_topo()
 	merge_coastline_streams()
 	merge_boundary()
+	merge_rocks()
 	remove_admin_boundary()
 
 	swapped_relations = sum(1 for x in n50_relations.values() if "match" in x)
@@ -2003,9 +2042,6 @@ if __name__ == '__main__':
 	if os.path.isfile(filename) or os.path.isfile(os.path.expanduser(import_folder + filename)):
 		message ("N50 filename: %s\n" % filename)
 		output_filename = filename.replace(".osm", "") + "_merged.osm"
-#	elif "-osm" in sys.argv:
-#		filename = ""
-#		output_filename = "n50_%s_%s_merged.osm" % (municipality_id, municipality_name.replace(" ", "_"))
 	else:
 		sys.exit("\t*** File '%s' not found\n\n" % filename)
 
