@@ -19,7 +19,8 @@ Paramters:
   * <code>-nosimplify</code> - Do not simplify geometry lines before output.
   * <code>-debug</code> - Include extra tags and lines for debugging, including original N50 tags.
   * <code>-tag</code> - Include original N50 tags.
-  * <code>-geojson</code> - Output raw N50 data in geojson format file.
+  * <code>-geojson</code> - Output raw N50 data in geojson file.
+  * <code>-elvis</code> - Output NVE Elvenett (river network) data in geojson file.
 
 The *utm.py* file should be located in the same folder as *n50osm.py* when running the program.
 
@@ -63,6 +64,13 @@ Paramters:
 ### Changelog
 
 n50osm.py
+* 1.7: Improved handling of rivers and streams:
+  - Match with waterways from NVE Elvenett (Elvis)
+  - Use to determine waterway direction (typically >50% hits)
+  - Add centreline waterways in river polygons
+  - Add contiguous waterways along municipality border instead of many short segments
+  - Combine into longer waterways based on Elvis network
+  - Add waterway names form SSR
 * 1.6: Improved verification of stream/river direction.
 * 1.5: Remove artifacts in polygon connections; More robust combination of polygons; Remove -short option (replaced by new code). 
 * 1.4: Add waterway=dam and intermittent rivers ("flomløpsgrense", requires manual editing); combine small wood polygons and river grids.
