@@ -12,7 +12,7 @@ import os.path
 from xml.etree import ElementTree as ET
 
 
-version = "1.2.0"
+version = "1.2.1"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -378,7 +378,7 @@ def get_municipality_name (query):
 		else:
 			municipalities = []
 			for municipality in result['kommuner']:
-				municipalities.append(municipality['kommunenummer'] + " " + municipalities['kommunenavnNorsk'])
+				municipalities.append(municipality['kommunenummer'] + " " + municipality['kommunenavnNorsk'])
 			sys.exit("\tMore than one municipality found: %s\n\n" % ", ".join(municipalities))
 
 
@@ -611,10 +611,10 @@ def filter_parts (part, n50_elements, found_elements):
 			for tag in all_tags:
 				key = tag.attrib['k']
 				value = tag.attrib['v']
-				if part == "coastline" and (key == "natural" and value == "coastline" or key == "seamark:type") or \
-						part == "water" and (key == "natural" and value in ["water", "wetland", "glacier"] or key == "waterway") or \
-						part == "wood" and key == "natural" and value == "wood" or \
-						part == "landuse" and key in ["landuse", "leisure", "aeroway"]:
+				if (part == "coastline" and (key == "natural" and value == "coastline" or key == "seamark:type")
+						or part == "water" and (key == "natural" and value in ["water", "wetland", "glacier"] or key == "waterway")
+						or part == "wood" and key == "natural" and value == "wood"
+						or part == "landuse" and key in ["landuse", "leisure", "aeroway"]):
 					found_elements.add(element_id)
 					break
 
@@ -1036,18 +1036,22 @@ def prepare_objects(ways, relations):
 
 
 
-# Add N50 tags to existing OSM element.
+# Add existing OSM tags to new N50 tags.
 # Keep existing tags from OSM if new keys or conflicting values, adding "OSM_" prefix.
 
 def update_tags(osm_element, n50_element):
 
 	for key, value in iter(osm_element['tags'].items()):
 		if ((key not in n50_element['tags'] or value != n50_element['tags'][ key ]) 
-				and "source" not in key and key != "created_by"
+				and "source" not in key
+				and key != "created_by"
+				and not (key == "type" and value == "multipolygon")
 				and not (value == "coastline" and "member" in n50_element)  # Relation
 				and not (value in ["islet", "island"] and "place" in n50_element['tags'] and n50_element['tags']['place'] in ["islet", "island"])
 				and not (value == "forest" and "natural" in n50_element['tags'] and n50_element['tags']['natural'] == "wood")
-				and not (value == "riverbank" and "water" in n50_element['tags'] and n50_element['tags']['water'] == "river")):
+				and not (value == "riverbank" and "water" in n50_element['tags'] and n50_element['tags']['water'] == "river")
+				and not (key == "name" and "alt_name" in n50_element['tags'] and value in n50_element['tags']['alt_name'].split(";"))
+				and not (key == "alt_name" and "name" in n50_element['tags'] and value == n50_element['tags']['name'])):
 			if key in ["wikidata", "wikipedia"]:
 				n50_element['xml'].append(ET.Element("tag", k=key, v=value))
 			else:
@@ -1406,7 +1410,7 @@ def merge_topo():
 	count_down = len(osm_objects)
 
 	for osm_object in osm_objects:
-		message ("\r\t%i " % count_down)
+		message ("\r\t\t%i " % count_down)
 		count_down -= 1
 
 		if osm_object['topo']:
@@ -1447,7 +1451,7 @@ def merge_topo():
 				osm_object['xml'].append(ET.Element("tag", k="PERCENT", v=str(int(best_hits))))
 				osm_object['xml'].set("action", "modify")
 
-	message ("\r\t  \tMerged %i polygons\n" % count_match)
+	message ("\r\t\tMerged %i polygons\n" % count_match)
 
 
 
@@ -1482,7 +1486,7 @@ def merge_coastline_streams():
 				 and not osm_way['incomplete']
 				 and not osm_way['parents']
 				 and osm_way['coordinates'][0] != osm_way['coordinates'][-1]):
-			message ("\r\t%i " % count_down)
+			message ("\r\t\t%i " % count_down)
 			count_down -= 1
 
 			min_bbox, max_bbox = get_bbox(osm_way['coordinates'])
@@ -1511,7 +1515,7 @@ def merge_coastline_streams():
 				merge_line(osm_way, best_match, other_parents=False)
 				count_match += 1
 
-	message ("\r\t  \tMerged %i lines\n" % count_match)
+	message ("\r\t\tMerged %i lines\n" % count_match)
 
 
 
@@ -1742,7 +1746,7 @@ def merge_boundary():
 	# Match border ways
 
 	for n50_way in n50_borders:
-		message ("\r\t%i " % count_down)
+		message ("\r\t\t%i " % count_down)
 		count_down -= 1
 
 		if distance(n50_way['coordinates'][0], n50_way['coordinates'][-1]) > 2:  # 2 meters tolerance
@@ -1785,7 +1789,7 @@ def merge_boundary():
 
 					break					
 
-	message ("\r\t  \tMerged %i boundary lines\n" % count_match)
+	message ("\r\t\tMerged %i border ways\n" % count_match)
 
 
 
