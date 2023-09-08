@@ -40,7 +40,7 @@ Paramters:
 
 * The *n50osm.py* program loads data from Kartverket N50, combines it with other data sources and produces an OSM file for import.
   * The N50 topology data is loaded from Kartverket. OSM relations are automatically created.
-  * Lake data is loaded from NVE.
+  * Lake data and waterway network is loaded from NVE.
   * Elevation data is loaded from Kartverket DTM api (not from the elevation DEM or TIFF files).
   * Place names are loaded from the [SSR import files](https://wiki.openstreetmap.org/wiki/No:Import_av_stedsnavn_fra_SSR2) created by the OSM community.
   * Buildings are tagged according to the building type CSV file on GitHub.
