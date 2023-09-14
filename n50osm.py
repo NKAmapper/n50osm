@@ -16,7 +16,7 @@ from xml.etree import ElementTree as ET
 import utm
 
 
-version = "1.7.0"
+version = "1.7.1"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -30,18 +30,19 @@ simplify_factor = 0.2     # Threshold for simplification
 max_combine_members = 10  # Maximum members for a wood feature to be combined
 max_connected_area = 20   # Maximum area of ÅpentOmråde to be simplified (m2)
 
-debug =        False  # Include debug tags and unused segments
-n50_tags =     False  # Include property tags from N50 in output
-json_output =  False  # Output complete and unprocessed geometry in geojson format
-elvis_output = False  # Output NVE river/stream network in geojson format
-no_duplicate = True   # Remove short river/stream duplicates along municipality boundary
-turn_stream =  True   # Load elevation data to check direction of streams
-lake_ele =     True   # Load elevation for lakes
-get_name =     True   # Load SSR place names
-get_nve =      True   # Load NVE lake and river data
-merge_node =   True   # Merge common nodes at intersections
-simplify =     True   # Simplify geometry lines
-merge_grid =   True   # Merge polygon grids (wood and rivers)
+debug =         False	# Include debug tags and unused segments
+n50_tags =      False	# Include property tags from N50 in output
+json_output =   False	# Output complete and unprocessed geometry in geojson format
+elvis_output =  False	# Output NVE river/stream network in geojson format
+border_output = False	# Output municipality border
+no_duplicate =  True 	# Remove short river/stream duplicates along municipality boundary
+turn_stream =   True 	# Load elevation data to check direction of streams
+lake_ele =      True 	# Load elevation for lakes
+get_name =      True 	# Load SSR place names
+get_nve =       True 	# Load NVE lake and river data
+merge_node =    True 	# Merge common nodes at intersections
+simplify =      True 	# Simplify geometry lines
+merge_grid =    True 	# Merge polygon grids (wood and rivers)
 
 data_categories = ["AdministrativeOmrader", "Arealdekke", "BygningerOgAnlegg", "Hoyde", "Restriksjonsomrader", "Samferdsel", "Stedsnavn"]
 
@@ -1294,15 +1295,17 @@ def load_nve_rivers(filename):
 				boundary['geometry']['coordinates'] = [ ( point[0], point[1] ) for point in boundary['geometry']['coordinates'] ]  # Get tuples
 
 	# Save geojson boundary file
-	'''
-	boundary_collection = {
-		'type': 'FeatureCollection',
-		'features': boundaries
-	}
-	file = open("boundary.geojson", "w")
-	json.dump(boundary_collection, file, indent=2, ensure_ascii=False)
-	file.close()
-	'''
+
+	if border_output:
+		boundary_collection = {
+			'type': 'FeatureCollection',
+			'features': boundaries
+		}
+		filename2 = filename.replace("n50", "border").replace("_Arealdekke", "").replace("_debug", "") + ".geojson"
+		file = open(filename2, "w")
+		json.dump(boundary_collection, file, indent=2, ensure_ascii=False)
+		file.close()
+
 
 	# Identify rivers/streams along boundary
 
@@ -1358,8 +1361,8 @@ def load_nve_rivers(filename):
 			'type': 'FeatureCollection',
 			'features': nve_features
 		}
-		filename = filename.replace("n50", "elvis").replace("_Arealdekke", "").replace("_debug", "") + ".geojson"
-		file = open(filename, "w")
+		filename2 = filename.replace("n50", "elvis").replace("_Arealdekke", "").replace("_debug", "") + ".geojson"
+		file = open(filename2, "w")
 		json.dump(feature_collection, file, indent=2, ensure_ascii=False)
 		file.close()
 		message ("\tSaved %i NVE rivers and streams to '%s'\n" % (nve_river_count, filename))
@@ -2832,6 +2835,7 @@ def get_ssr_name (feature, name_categories):
 				alt_names.append("%s [%s %s]" % (place['tags']['name'], place['tags']['ssr:type'], place['tags']['ssr:stedsnr']))
 				alt_names_short.append(place['tags']['name'])
 
+		# Check if NVE name is already present
 		nve = 0
 		if "name" in feature['tags']:
 			if feature['tags']['name'] in alt_names_short:
@@ -2840,25 +2844,8 @@ def get_ssr_name (feature, name_categories):
 			alt_names_short.insert(0, feature['tags']['name'])
 			nve = 1
 
-		# Name already suggested by NVE data, so get ssr:stedsnr and any alternative names
-		if "name" in feature['tags'] and feature['tags']['name'] in names:
-			name = feature['tags']['name']
-			for place in found_places:
-				if name in place['tags']['name'].replace(" - ", ";").split(";"):
-					feature['tags'].update(place['tags'])
-#					feature['tags']['name'] = name  # Add back NVE name
-					feature['extras']['ssr:type'] = feature['tags'].pop("ssr:type", None)
-
-					if "N100" in place['tags']:
-						feature['extras']['N100'] = feature['tags'].pop("N100", None)
-					if len(alt_names) > 1 + nve:
-						feature['tags']['FIXME'] = "Verify NVE name: " + ", ".join(alt_names)
-						feature['tags']['ALT_NAME'] = ";".join(alt_names_short)
-					name_count += 1
-					break
-
 		# Use N100 rank if present
-		elif any(["N100" in place['tags'] for place in found_places]):
+		if any(["N100" in place['tags'] for place in found_places]):
 			n100_places = [place for place in found_places if "N100" in place['tags']]
 			n100_places.sort(key=lambda place: place['tags']['N100'])
 
@@ -2874,30 +2861,50 @@ def get_ssr_name (feature, name_categories):
 				feature['tags']['ALT_NAME'] = ";".join(alt_names_short)
 			name_count += 1
 
-		# Only one name found, or only one name of preferred type
-		elif (len(alt_names) == 1 + nve
-				or "øyISjø" in found_places[0]['tags']['ssr:type'] and "øyISjø" not in found_places[1]['tags']['ssr:type']
-				or "øy" in found_places[0]['tags']['ssr:type'] and "øy" not in found_places[1]['tags']['ssr:type']
-				or "holme" in found_places[0]['tags']['ssr:type'] and "holme" not in found_places[1]['tags']['ssr:type']):
+		# Name already suggested by NVE data, so get ssr:stedsnr and any alternative names
+		elif "name" in feature['tags'] and feature['tags']['name'] in names:
+			name = feature['tags']['name']
+			for place in found_places:
+				# Avoid group names, often used by NVE
+				if name in place['tags']['name'].replace(" - ", ";").split(";") and "gruppe" not in place['tags']['ssr:type']:
+					feature['tags'].update(place['tags'])
+#					feature['tags']['name'] = name  # Add back NVE name
+					feature['extras']['ssr:type'] = feature['tags'].pop("ssr:type", None)
 
-			feature['tags'].update(found_places[0]['tags'])
-			feature['extras']['ssr:type'] = feature['tags'].pop("ssr:type", None)
+#					if "N100" in place['tags']:
+#						feature['extras']['N100'] = feature['tags'].pop("N100", None)
+					if len(alt_names) > 1 + nve:
+						feature['tags']['FIXME'] = "Verify NVE name: " + ", ".join(alt_names)
+						feature['tags']['ALT_NAME'] = ";".join(alt_names_short)
+					name_count += 1
+					break
 
-			if len(alt_names) > 1 + nve:
-				feature['tags']['FIXME'] = "Verify name: " + ", ".join(alt_names)
+		if "ssr:stedsnr" not in feature['tags']:  # Name not selected yet
+
+			# Only one name found, or only one name of preferred type
+			if (len(alt_names) == 1 + nve
+					or "øyISjø" in found_places[0]['tags']['ssr:type'] and "øyISjø" not in found_places[1]['tags']['ssr:type']
+					or "øy" in found_places[0]['tags']['ssr:type'] and "øy" not in found_places[1]['tags']['ssr:type']
+					or "holme" in found_places[0]['tags']['ssr:type'] and "holme" not in found_places[1]['tags']['ssr:type']):
+
+				feature['tags'].update(found_places[0]['tags'])
+				feature['extras']['ssr:type'] = feature['tags'].pop("ssr:type", None)
+
+				if len(alt_names) > 1 + nve:
+					feature['tags']['FIXME'] = "Verify name: " + ", ".join(alt_names)
+					feature['tags']['ALT_NAME'] = ";".join(alt_names_short)
+				name_count += 1
+
+			# Not able to determine only one name
+			else:
+				# If same type, select longest name
+				same_places = [ place for place in found_places if place['tags']['ssr:type'] == found_places[0]['tags']['ssr:type'] ]
+				same_places.sort(key=lambda name: len(name['tags']['name']), reverse=True)
+					
+				feature['tags'].update(same_places[0]['tags'])
+				feature['extras']['ssr:type'] = feature['tags'].pop("ssr:type", None)		
+				feature['tags']['FIXME'] = "Choose name: " + ", ".join(alt_names)
 				feature['tags']['ALT_NAME'] = ";".join(alt_names_short)
-			name_count += 1
-
-		# Not able to determine only one name
-		else:
-			# If same type, select longest name
-			same_places = [ place for place in found_places if place['tags']['ssr:type'] == found_places[0]['tags']['ssr:type'] ]
-			same_places.sort(key=lambda name: len(name['tags']['name']), reverse=True)
-				
-			feature['tags'].update(same_places[0]['tags'])
-			feature['extras']['ssr:type'] = feature['tags'].pop("ssr:type", None)		
-			feature['tags']['FIXME'] = "Choose name: " + ", ".join(alt_names)
-			feature['tags']['ALT_NAME'] = ";".join(alt_names_short)
 
 		# Warning for equal rank names ("sidestilte navn")
 		if ";" in feature['tags']['name']:
@@ -3027,20 +3034,20 @@ def get_place_names():
 
 	message ("\t%i place names in SSR file from %s\n" % (len(ssr_places), ssr_source))
 
-	# Get island names
+	# Get island names. Group names sorted last.
 
-	name_category = ["øyISjø", "øygruppeISjø", "holmeISjø", "skjærISjø", "øy", "øygruppe", "holme", "skjær"]  # "holmegruppeISjø"
+	name_category = ["øyISjø", "holmeISjø", "skjærISjø", "øy", "holme", "skjær", "øygruppeISjø", "øygruppe"]  # "holmegruppeISjø"
 	for elements in [segments, features]:
 		for element in elements:
 			if "place" in element['tags'] and element['tags']['place'] in ["island", "islet"]:
 				get_ssr_name(element, name_category)
 
-	# Get lake names + build list of lake center coordinate to get elevation
+	# Get lake names + build list of lake center coordinate to get elevation. Group and part names sorted last.
 
 	if lake_ele and data_category == "Arealdekke":
 		message ("\tLoading lake elevations...\n")
 
-	name_category = ["innsjø", "delAvInnsjø", "vann", "gruppeAvVann", "delAvVann", "kanal", "gruppeAvTjern", "tjern", "lon", "pytt"]
+	name_category = ["innsjø", "vann", "tjern", "lon", "pytt", "kanal", "gruppeAvVann", "gruppeAvTjern", "delAvInnsjø", "delAvVann"]
 	lake_ele_count = 0
 	ele_nodes = []
 	lake_elevations = []
@@ -3162,6 +3169,8 @@ def get_place_names():
 				while point in nodes:
 					point = (point[0], point[1] + 0.00005)
 				tags = copy.deepcopy(place['tags'])
+				if tags["ssr:type"] == "dam":
+					tags["waterway"] = "dam"
 				tags['SSR_WATERWAY'] = tags.pop("ssr:type", None)
 				create_point(point, tags, object_type = "Stedsnavn")
 
