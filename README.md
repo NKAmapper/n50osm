@@ -6,7 +6,7 @@ Tools for extracting N50 topo data from Kartverket and for merging it with exist
 Usage: <code>python3 n50osm.py \<municipality\> \<category\> [-options]</code>
 
 Paramters:
-* *municipality* - Name of municipality or 4 digit municipality number.
+* *municipality* - Name of municipality or 4 digit municipality number. Historic municipalities from 2018 also supported.
 * *category* - One of the following data categories in N50:
   * <code>AdministrativeOmrader</code> - Municipal boundaries. Rough boundaries, so please do not import into OSM.
   * <code>Arealdekke</code> - This is the topo data used in the N50 import (default if no category given).
@@ -31,8 +31,8 @@ Merges N50 import file with existing OSM. Also splits import file into smaller "
 Usage: <code>python3 n50merge.py \<municipality\> [filename] [-split|-layer]</code>
 
 Paramters:
-* *municipality* - Name of municipality or 4 digit municipality number. If only this parameter is given, the file produced by *n50osm.py* will be merged with OSM.
-* *filename* - Optional N50 import file, or standard category from split (*coastline*, *water*, *wood* or *landuse*). If not given, the program will look for the filename produced by n50osm.py for the given municipality.
+* *municipality* - Name of municipality or 4 digit municipality number. If only this parameter is given, the file produced by *n50osm.py* will be merged with OSM. 
+* *filename* - Optional N50 import file, or standard category from split (*coastline*, *water*, *wood* or *landuse*). If not given, the program will look for the filename produced by n50osm.py for the given municipality. Keep filename format produced by _n50osm.py_ for historic municipality.
 * <code>-split</code> - Will split the N50 import file into 4 layers (*coastline*, *water*, *wood* or *landuse*). No merging.
 * <code>-layer</code> - Will merge one of the N50 layers produced by split into OSM. Identical ways already in OSM from previous layers are merged.
 
@@ -64,6 +64,7 @@ Paramters:
 ### Changelog
 
 n50osm.py
+* 1.8: Support historic municipalities; Output municipality boarder file; Optimized name selection; Minor bug fixes.
 * 1.7: Improved handling of rivers and streams:
   - Match with waterways from NVE Elvenett (Elvis)
   - Use to determine waterway direction (typically >50% hits)
@@ -85,6 +86,7 @@ n50osm.py
 * 0.4: Code converted to Python 3.
 
 n50merge.py
+* 1.3: Support historic municipalities; Swap landuse=meadow with farmland; Minor bug fixes.
 * 1.2: Support for merging seamark:type=rock.
 * 1.1: Optiimized for merging large areas, typically large islands.
 * 1.0: Support for automatic matching and merging based on similarity of shapes.
