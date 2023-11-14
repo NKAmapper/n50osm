@@ -12,7 +12,7 @@ import os.path
 from xml.etree import ElementTree as ET
 
 
-version = "1.2.1"
+version = "1.3.0"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -20,9 +20,9 @@ overpass_api = "https://overpass-api.de/api/interpreter"  # Overpass endpoint
 
 import_folder = "~/Jottacloud/osm/n50/"  # Folder containing import highway files (current working folder tried first)
 
-n50_parts = ['coastline', 'water', 'wood', 'landuse']
+n50_parts = ['coastline', 'water', 'wood', 'landuse']  # Part names when splitting file
 
-max_diff = 50        # Maximum permitted difference i meters when matching areas/lines
+max_diff = 100       # Maximum permitted difference in meters when matching areas/lines
 min_equal_area = 50  # Minimum percent Hausdorff hits within max_diff, for areas
 min_equal_line = 30  # Minimum percent Hausdorff hits within max_diff, for lines
 max_wood_merge = 10  # Maximum relation members when merging wood relations
@@ -236,7 +236,7 @@ def hausdorff_distance (polygon1, polygon2, limit = False, percent = False, poly
 	if percent and len(polygon1) * len(polygon2) > max_node_match:
 		step = int(math.sqrt(max_node_match))
 		p1 = polygon1[: -1 : 1 + len(polygon1) // step ] + [ polygon1[-1] ]
-		p2 = polygon1[: -1 : 1 + len(polygon2) // step ] + [ polygon2[-1] ]
+		p2 = polygon2[: -1 : 1 + len(polygon2) // step ] + [ polygon2[-1] ]
 	else:
 		p1 = polygon1
 		p2 = polygon2
@@ -308,7 +308,7 @@ def hausdorff_distance (polygon1, polygon2, limit = False, percent = False, poly
 				return cmax
 
 	if percent:
-		return cmax, 100.0 * count_hits/(N1+N2-1-end)
+		return [ cmax, 100.0 * count_hits / (N1 + N2 - 1 - end) ]
 	else:
 		return cmax
 
@@ -408,6 +408,8 @@ def get_topo_type(tags):
 	if "landuse" in tags:
 		if tags['landuse'] == "forest":
 			topo_type.add("wood")
+		elif tags['landuse'] == "meadow":
+			topo_type.add("farmland")
 		else:
 			topo_type.add(tags['landuse'])
 	if "waterway" in tags:
@@ -521,8 +523,14 @@ def load_osm():
 
 	message ("Load existing OSM elements from Overpass ...\n")
 
+	if historic_id:
+		area_query = '[old_ref=%s]["was:place"=municipality]' % historic_id
+	else:
+		area_query = '[ref=%s][admin_level=7][place=municipality]' % municipality_id
+
+
 	query = ('[timeout:200];'
-				'(area[ref=%s][admin_level=7][place=municipality];)->.a;'
+				'(area%s;)->.a;'
 				'('
 					'nwr["natural"](area.a);'
 					'nwr["waterway"](area.a);'
@@ -532,7 +540,7 @@ def load_osm():
 					'nwr["seamark:type"="rock"](area.a);'
 				');'
 				'(._;>;<;);'
-				'out meta;' % municipality_id)
+				'out meta;' % area_query)
 
 	request = urllib.request.Request(overpass_api + "?data=" + urllib.parse.quote(query), headers=header)
 	try:
@@ -1209,6 +1217,13 @@ def merge_area(osm_object, n50_object):
 			index = n50_relations[ parent ]['members'].index(n50_id)
 			n50_relations[ parent ]['members'][ index ] = osm_id
 
+		# Pool nodes for later swapping
+		for node in osm_way['nodes']:
+			if "used" not in osm_nodes[ node ]:
+				if osm_id in osm_nodes[ node ]['parents']:
+					osm_nodes[ node ]['parents'].remove(osm_id)  # Node may be used later if no other parents
+				old_osm_nodes.add(node)
+
 
 	# Internal function for matching ways to be swapped
 
@@ -1253,6 +1268,7 @@ def merge_area(osm_object, n50_object):
 
 		# Pool nodes of all members for later swapping
 
+		'''
 		for member in osm_members:
 			way = osm_ways[ member ]
 			if "used" not in way and len(way['parents']) <= max_parents:
@@ -1261,6 +1277,7 @@ def merge_area(osm_object, n50_object):
 						if member in osm_nodes[ node ]['parents']:
 							osm_nodes[ node ]['parents'].remove(member)  # Node may be used later if no other parents
 						old_osm_nodes.add(node)
+		'''
 
 		for member in n50_members:
 			if member in n50_ways and "match" not in n50_ways[ member ]:
@@ -1286,6 +1303,12 @@ def merge_area(osm_object, n50_object):
 					osm_way['xml'].set("action", "delete")				
 					osm_way['used'] = True
 
+					# Pool nodes for later swapping
+					for node in osm_way['nodes']:
+						if "used" not in osm_nodes[ node ]:
+							if member in osm_nodes[ node ]['parents']:
+								osm_nodes[ node ]['parents'].remove(member)  # Node may be used later if no other parents
+							old_osm_nodes.add(node)
 
 	# Main function starts.
 
@@ -1436,7 +1459,7 @@ def merge_topo():
 					if hits > best_hits:
 						best_match = n50_object
 						min_hausdorff = hausdorff
-						best_hits = hits				
+						best_hits = hits			
 
 			if best_hits > min_equal_area:
 				if debug:
@@ -1568,6 +1591,9 @@ def merge_boundary():
 	# Note: If OSM relation is already merged then osm_relation is in the N50 structure
 
 	def merge_relations(osm_way, n50_way, osm_relation, n50_relation):
+
+		if osm_relation['id'] == "16400844" or n50_relation['id'] == "16400844":
+			sys.exit()
 
 		# Reverse member order if osm_relation and n50_relation members are not connected in the same order
 
@@ -1762,12 +1788,12 @@ def merge_boundary():
 					# Swap line only (remove duplicate)
 					if ("wood" in n50_relation['topo']
 							and (len(n50_relation['members']) > max_wood_merge and len(osm_relation['members']) > max_wood_merge
-								or "grid" in osm_relation or "grid" in n50_relation)
+								or "grid" in osm_relation and "grid" in n50_relation)
 							and not("grid" in osm_relation and "grid" in n50_relation
 									and osm_relation['grid'] == n50_relation['grid'])):
 
-						tag_xml = n50_way['xml'].find("tag[@k='FIXME']")
-						n50_way['xml'].remove(tag_xml)
+#						tag_xml = n50_way['xml'].find("tag[@k='FIXME']")
+#						n50_way['xml'].remove(tag_xml)
 						merge_line(osm_way, n50_way, other_parents=True)
 						count_match += 1
 
@@ -1898,21 +1924,22 @@ def remove_admin_boundary():
 
 	# Add members of relations tagged with boundary=*
 	for relation in osm_relations.values():
-		if "used" not in relation and "boundary" in relation['tags']:
+		if "used" not in relation and ("boundary" in relation['tags'] or "was:boundary" in relation['tags']):
 			for member in relation['members']:
 				if member in osm_ways:
 					boundary_ways.add(member)
 
 	# Add ways tagged with boundary=*
 	for way in osm_ways.values():
-		if "used" not in way and "boundary" in way['tags']:
+		if "used" not in way and ("boundary" in way['tags'] or "was:boundary" in way['tags']):
 			boundary_ways.add(way['id'])
 
 	# Hide nodes belonging to ways tagged with boundary=*
 	count_node = 0
 	for node_id, node in iter(osm_nodes.items()):
 		if ("used" not in node and node['parents']
-				and  all(parent in osm_ways and "boundary" in osm_ways[ parent ]['tags'] for parent in node['parents'])):
+				and  all(parent in osm_ways and ("boundary" in osm_ways[ parent ]['tags'] or "was:boundary" in osm_ways[ parent ]['tags'])
+						for parent in node['parents'])):
 			osm_root.remove(node['xml'])
 			count_node += 1
 
@@ -1924,7 +1951,9 @@ def remove_admin_boundary():
 		for node_id in way['nodes']:
 			if node_id in osm_nodes:
 				node = osm_nodes[ node_id ]
-				if "used" in node or any(parent not in osm_ways or "boundary" not in osm_ways[ parent ]['tags'] for parent in node['parents']):
+				if ("used" in node
+						or any(parent not in osm_ways or ("boundary" not in osm_ways[ parent ]['tags'] and "was:boundary" not in osm_ways[ parent ]['tags'])
+								for parent in node['parents'])):
 					has_node = True
 		if not way['incomplete'] and not has_node:
 			osm_root.remove(osm_ways[ way_id ]['xml'])
@@ -2029,6 +2058,7 @@ if __name__ == '__main__':
 
 	municipality_query = sys.argv[1]
 	[municipality_id, municipality_name] = get_municipality_name(municipality_query)
+	historic_id = ""
 	if municipality_id is None:
 		sys.exit("Municipality '%s' not found\n" % municipality_query)
 	else:
@@ -2038,10 +2068,14 @@ if __name__ == '__main__':
 
 	if len(sys.argv) > 2 and ".osm" in sys.argv[2]:
 		filename = sys.argv[2]
+		if filename[:4] == "n50_" and filename[4:8].isdigit() and filename[4:8] != municipality_id:
+			historic_id = filename[4:8]
+			message ("Assuming historic N50 data for %s\n" % historic_id)
+
 	elif len(sys.argv) > 2 and sys.argv[2] in n50_parts:
-		filename = "n50_%s_%s_Arealdekke_%s.osm" % (municipality_id, municipality_name, sys.argv[2])
+		filename = "n50_%s_%s_Arealdekke_%s.osm" % (municipality_id, municipality_name.replace(" ", "_"), sys.argv[2])
 	else:
-		filename = "n50_%s_%s_Arealdekke.osm" % (municipality_id, municipality_name)
+		filename = "n50_%s_%s_Arealdekke.osm" % (municipality_id, municipality_name.replace(" ", "_"))
 
 	if os.path.isfile(filename) or os.path.isfile(os.path.expanduser(import_folder + filename)):
 		message ("N50 filename: %s\n" % filename)
