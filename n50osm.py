@@ -16,7 +16,7 @@ from xml.etree import ElementTree as ET
 import utm
 
 
-version = "1.7.1"
+version = "1.8.0"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -29,12 +29,13 @@ max_stream_error = 1.0 	  # Minimum meters of elevation difference for turning d
 simplify_factor = 0.2     # Threshold for simplification
 max_combine_members = 10  # Maximum members for a wood feature to be combined
 max_connected_area = 20   # Maximum area of ÅpentOmråde to be simplified (m2)
+historic = {}			  # Get historic municipality, otherwise empty for current
 
 debug =         False	# Include debug tags and unused segments
 n50_tags =      False	# Include property tags from N50 in output
 json_output =   False	# Output complete and unprocessed geometry in geojson format
 elvis_output =  False	# Output NVE river/stream network in geojson format
-border_output = False	# Output municipality border
+border_output = True	# Output municipality border
 no_duplicate =  True 	# Remove short river/stream duplicates along municipality boundary
 turn_stream =   True 	# Load elevation data to check direction of streams
 lake_ele =      True 	# Load elevation for lakes
@@ -210,11 +211,11 @@ def tag_object(feature_type, geometry_type, properties, feature):
 			tags['aeroway'] = "aerodrome"
 			if "trafikktype" in properties:
 				if properties['trafikktype'] == "I":
-					tags['aeroway:type'] = "international"
+					tags['aerodrome:type'] = "international"
 				elif properties['trafikktype'] == "N":
-					tags['aeroway:type'] = "regional"
+					tags['aerodrome:type'] = "regional"
 				elif properties['trafikktype'] == "A":
-					tags['aeroway:type'] = "airfield"
+					tags['aerodrome:type'] = "airfield"
 		if "iataKode" in properties and properties['iataKode'] != "XXX":
 			tags['iata'] = properties['iataKode']
 		if "icaoKode" in properties and properties['icaoKode'] != "XXXX":
@@ -484,7 +485,7 @@ def line_distance(s1, s2, p3):
 
 # Calculate shortest distance from node p to line.
 
-def shortest_distance(line, p):
+def shortest_distance(p, line):
 
 	d_min = 999999.9  # Dummy
 	position = None
@@ -503,10 +504,10 @@ def shortest_distance(line, p):
 
 def coordinate_offset (node, distance):
 
-	m = (1 / ((math.pi / 180.0) * 6378137.0))  # Degrees per meter
+	m = (math.pi / 180.0) * 6378137.0  # Meters per degree, ca 111 km
 
-	latitude = node[1] + (distance * m)
-	longitude = node[0] + (distance * m) / math.cos( math.radians(node[1]) )
+	latitude = node[1] + distance / m
+	longitude = node[0] + distance / (m * math.cos( math.radians(node[1]) ))
 
 	return (longitude, latitude)
 
@@ -698,7 +699,7 @@ def parse_coordinates (coord_text):
 
 # Get name or id of municipality from GeoNorge api
 
-def get_municipality_name (query):
+def get_municipality_name2 (query):
 
 	if query.isdigit():
 		url = "https://ws.geonorge.no/kommuneinfo/v1/kommuner/" + query
@@ -735,6 +736,98 @@ def get_municipality_name (query):
 			for municipality in result['kommuner']:
 				municipalities.append(municipality['kommunenummer'] + " " + municipality['kommunenavnNorsk'])
 			sys.exit("\tMore than one municipality found: %s\n\n" % ", ".join(municipalities))
+
+
+# Get municipality info
+
+def get_municipality_name (query, get_historic=False):
+
+	# Search by municipality ref or name
+
+	url = "https://ws.geonorge.no/kommunereform/v1/endringer/?sok=" + urllib.parse.quote(query.replace("-", " "))
+	request = urllib.request.Request(url, headers=header)
+	file = urllib.request.urlopen(request)
+	result1 = json.load(file)
+	file.close()
+
+	found = []
+	all_found = []
+	for municipality in result1['data']:
+		if get_historic == ("gyldigtil" in municipality) or get_historic and municipality['navn'] == "STAVANGER":
+			all_found.append(municipality)
+			if municipality['navn'] == query.upper() or municipality['id'] == query:
+				found.append(municipality)
+
+	if len(all_found) == 1:
+		found = all_found
+
+	# One municipality found
+
+	if len(found) == 1:
+		name = found[0]['navn'].title().replace(" I ", " i ").replace(" Og ", " og ")
+		ref = found[0]['id']
+
+		if not get_historic:
+			# One current match
+			return (ref, name, {})
+
+		else:
+			# Special case for Stavanger, not covered by API
+
+			if name == "Stavanger":
+				historic = {
+					'year': '2019',
+					'id': '1103',
+					'name': 'Stavanger'
+				}
+				return ("1103", "Stavanger", historic)
+
+			# Get associated current municipality
+
+			url = "https://ws.geonorge.no/kommunereform/v1/endringer/" + ref
+			request = urllib.request.Request(url, headers=header)
+			file = urllib.request.urlopen(request)
+			result2 = json.load(file)
+			file.close()
+
+			new_ref = result2['data']['erstattetav'][0]['id']
+
+			url = "https://ws.geonorge.no/kommunereform/v1/endringer/" + new_ref
+			request = urllib.request.Request(url, headers=header)
+			file = urllib.request.urlopen(request)
+			result3 = json.load(file)
+			file.close()
+
+			new_name = result2['data']['erstattetav'][0]['navn'].title().replace(" I ", " i ").replace(" Og ", " og ")
+			year = str(int(result2['data']['kommune']['gyldigtil'][:4]) - 1)
+			historic = {
+				'year': year,
+				'id': ref,
+				'name': name
+			}
+
+			if len(result3['data']['erstatter']) == 1:
+				sys.exit("Current N50 data for %s %s same as for historic %s %s in %s\n\n" % (new_ref, new_name, ref, name, year))
+			elif historic['year'] < "2018":
+				sys.exit("%s %s existed until %s, however historic N50 data not available before 2018\n\n" % (ref, name, year))
+			else:
+				return (new_ref, new_name, historic)
+
+	# More than one match
+
+	elif len(all_found) > 1:
+		municipalities = []
+		for municipality in all_found:
+			name = municipality['navn'].title().replace(" I ", " i ").replace(" Og ", " og ")
+			if name in ["Våler", "Herøy"] or get_historic and name in ["Bø", "Sande", "Os", "Nes"]:
+				name += " (%s)" % municipality['fylke'].title().replace(" Og ", " og ")
+			if "gyldigtil" in municipality:
+				name += " [%s]" % str(int(municipality['gyldigtil'][:4]) - 1)
+			municipalities.append(municipality['id'] + " " + name)
+		sys.exit("More than one municipality found: %s\n\n" % ", ".join(municipalities))
+
+	else:
+		sys.exit("Municipality '%s' not found\n\n" % query)
 
 
 
@@ -925,8 +1018,10 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 	global utm_zone, gml_id, ns_gml, ns_app, ns
 
 	# XML name space
-	ns_gml = 'http://www.opengis.net/gml/3.2'
-	ns_app = 'http://skjema.geonorge.no/SOSI/produktspesifikasjon/N50/20170401'
+	ns_gml = "http://www.opengis.net/gml/3.2"
+	ns_app = "http://skjema.geonorge.no/SOSI/produktspesifikasjon/N50/20170401"
+	if historic:
+		ns_app = "http://skjema.geonorge.no/sosi/produktspesifikasjon/N50/20170401/"
 
 	ns = {
 		'gml': ns_gml,
@@ -935,7 +1030,7 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 
 	lap = time.time()
 
-	message ("\nLoad N50 data from Kartverket...\n")
+	message ("Load N50 data from Kartverket...\n")
 
 	source_date = ["9", "0"]	 # First and last source date ("datafangstdato")
 	update_date = ["9", "0"]	 # First and last update date ("oppdateringsdato")
@@ -945,9 +1040,13 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 	# Load latest N50 file for municipality from Kartverket, using best UTM zone available
 
 	n50_url = "https://nedlasting.geonorge.no/geonorge/Basisdata/N50Kartdata/GML/"
-	
+	if historic:
+		n50_url = n50_url.replace("N50Kartdata", "N50KartdataHistoriskeData" + historic['year'])
+
 	for utm_zone in [32, 35, 33]:
 		filename = "Basisdata_%s_%s_258%i_N50Kartdata_GML" % (municipality_id, municipality_name, utm_zone)
+		if historic:
+			filename = "Basisdata_%s_%s_258%i_N50KartdataHistoriskeData%s_GML" % (historic['id'], historic['name'], utm_zone, historic['year'])
 		filename = clean_filename(filename)
 		request = urllib.request.Request(n50_url + filename + ".zip", headers=header)
 		try:
@@ -958,7 +1057,7 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 			error = err
 
 	if error is not None:
-		sys.exit("\n\t*** %s\n\n" % err)
+		sys.exit("\n\t*** %s\n\t%s\n\n" % (error, n50_url + filename + ".zip"))
 
 	message ("\tLoading file '%s'\n" % filename)
 
@@ -967,7 +1066,10 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 #	for file_entry in zip_file.namelist():
 #		message ("\t%s\n" % file_entry)
 
+	if historic:
+		filename = filename.replace("HistoriskeData" + historic['year'], "")
 	filename2 = filename.replace("Kartdata", data_category)  # For example "Arealdekke"
+
 	file = zip_file.open(filename2 + ".gml")
 
 	tree = ET.parse(file)
@@ -1031,7 +1133,7 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 
 			if not (entry['type'] == "LineString" and len(entry['coordinates']) <= 1):
 				if geometry_type == "grense":
-					if feature_type in ["Kystkontur", "HavElvSperre", "HavInnsjøSperre"]:
+					if feature_type in ["Kystkontur", "HavElvSperre", "HavInnsjøSperre", "Flomløpkant"]:
 						entry['used'] = 1
 					else:
 						entry['used'] = 0
@@ -1132,6 +1234,62 @@ def load_man_made_features(zip_file, filename):
 
 
 
+# Load municipality boundary polygon
+
+def load_municipality_boundary(filename):
+
+	# Load boundary file
+
+	if historic and historic['year'] >= "2019":
+		boundary_url = "https://nedlasting.geonorge.no/geonorge/Basisdata/Kommuner%s/GeoJSON/" % historic['year']
+		boundary_filename = "Basisdata_%s_%s_4258_Kommuner%s_GeoJSON" % (historic['id'], historic['name'], historic['year'])
+		collection = "administrative_enheter%s." % historic['year']
+	else:
+		boundary_url = "https://nedlasting.geonorge.no/geonorge/Basisdata/Kommuner/GeoJSON/"
+		boundary_filename = "Basisdata_%s_%s_4258_Kommuner_GeoJSON" % (municipality_id, municipality_name)
+		collection = "administrative_enheter." 
+
+	boundary_filename = clean_filename(boundary_filename)
+	request = urllib.request.Request(boundary_url + boundary_filename + ".zip", headers=header)
+	file_in = urllib.request.urlopen(request)
+	zip_file = zipfile.ZipFile(BytesIO(file_in.read()))
+	file = zip_file.open(boundary_filename + ".geojson")
+	boundary_data = json.load(file)
+	file.close()
+	file_in.close()
+
+	# Establish list of boundary segments
+
+	for feature in boundary_data[ collection + "kommune" ]['features']:  # Incl. exclaves and multiple polygons (Kinn)
+		patches = []
+		for boundary in feature['geometry']['coordinates']:  # Incl. enclaves
+			polygon = [ ( point[0], point[1] ) for point in boundary ]  # Get tuples
+			patches.append( simplify_line(polygon, 1) )
+		municipality_border.append(patches)
+
+	for boundary_type, boundary_collection in iter(boundary_data.items()):
+		if "kommunegrense" in boundary_type or "fylkesgrense" in boundary_type or "riksgrense" in boundary_type:  # Boundary segments
+			for boundary in boundary_collection['features']:
+				polygon = [ ( point[0], point[1] ) for point in boundary['geometry']['coordinates'] ]  # Get tuples
+				boundary['geometry']['coordinates'] = simplify_line(polygon, 1)
+			municipality_border_segments.extend(boundary_collection['features'])
+
+	# Save geojson boundary file
+
+	if border_output:
+		feature = boundary_data[ collection + "kommune" ]['features'][0]
+		feature['properties'] = {
+			'KOMMUNE': feature['properties']['navn'][0]['navn'],
+			'REF': feature['properties']['kommunenummer']
+		}
+		filename2 = filename.replace("n50", "border").replace("_Arealdekke", "").replace("_debug", "") + ".geojson"
+		file = open(filename2, "w")
+		json.dump(boundary_data[ collection + "kommune" ], file, indent=2, ensure_ascii=False)
+		file.close()
+		message ("Saved municipality boundary to '%s'\n" % filename2)
+
+
+
 # Load rivers from NVE Elvenett (Elvis database)
 # API reference: https://nve.geodataonline.no/arcgis/rest/services/Elvenett1/MapServer/
 
@@ -1142,9 +1300,21 @@ def load_nve_rivers(filename):
 	# Pass 1: Load rivers from NVE
 
 	lap = time.time()
-	nve_rivers = []  # Geojson features for output of all rivers inside bbox
-	bbox_string = urllib.parse.quote("%f,%f,%f,%f" % (municipality_bbox[0][0], municipality_bbox[0][1], municipality_bbox[1][0], municipality_bbox[1][1]))
 
+	# Get municipality bbox for NVE query
+
+	bbox_list = []
+	for segment in segments:
+		if segment['object'] != "FiktivDelelinje":
+			bbox = get_bbox(segment['coordinates'])
+			bbox_list.extend([( bbox[0][0], bbox[0][1] ), ( bbox[1][0], bbox[1][1] )])  # Tuples
+	[ bbox_min, bbox_max ] = get_bbox(bbox_list)
+
+	bbox_string = urllib.parse.quote("%f,%f,%f,%f" % (bbox_min[0], bbox_min[1], bbox_max[0], bbox_max[1]))
+
+	# Load rivers (paged)
+
+	nve_rivers = []  # Geojson features for output of all rivers inside bbox
 	nve_river_count = 0
 	more_rivers = True
 
@@ -1202,6 +1372,8 @@ def load_nve_rivers(filename):
 
 
 	# Pass 2: Identify river centerlines for riverbanks + within municipality
+
+	message ("\tIdentify river center lines ... ")
 
 	# Build list of riverbanks from N50
 	n50_riverbanks = []
@@ -1267,56 +1439,22 @@ def load_nve_rivers(filename):
 		river['used'] = True
 		count_load += 1
 
-	message ("\t%i NVE river centerlines inserted for %i riverbanks\n" % (count_load, len(n50_riverbanks)))
+	message ("%i NVE river centerlines inserted for %i riverbanks\n" % (count_load, len(n50_riverbanks)))
 
 
-	# Pass 3: Match with municipality boundary
+	# Pass 3: Identify rivers/streams along municipality boundary
 
-	# Load boundary file
+	message ("\tIdentifying rivers along municipality boundary ... ")
 
-	boundary_url = "https://nedlasting.geonorge.no/geonorge/Basisdata/Kommuner/GeoJSON/"
-	boundary_filename = "Basisdata_%s_%s_4258_Kommuner_GeoJSON" % (municipality_id, municipality_name)
-	boundary_filename = clean_filename(boundary_filename)
-	request = urllib.request.Request(boundary_url + boundary_filename + ".zip", headers=header)
-	file_in = urllib.request.urlopen(request)
-	zip_file = zipfile.ZipFile(BytesIO(file_in.read()))
-	file = zip_file.open(boundary_filename + ".geojson")
-	boundary_data = json.load(file)
-	file.close()
-	file_in.close()
-
-	# Establish list of boundary segments
-
-	boundaries = []
-	for boundary_type, boundary_collection in iter(boundary_data.items()):
-		if boundary_type not in ["administrative_enheter.kommune", "administrative_enheter.territorialgrense"]:
-			boundaries.extend(boundary_collection['features'])
-			for boundary in boundary_collection['features']:
-				boundary['geometry']['coordinates'] = [ ( point[0], point[1] ) for point in boundary['geometry']['coordinates'] ]  # Get tuples
-
-	# Save geojson boundary file
-
-	if border_output:
-		boundary_collection = {
-			'type': 'FeatureCollection',
-			'features': boundaries
-		}
-		filename2 = filename.replace("n50", "border").replace("_Arealdekke", "").replace("_debug", "") + ".geojson"
-		file = open(filename2, "w")
-		json.dump(boundary_collection, file, indent=2, ensure_ascii=False)
-		file.close()
-
-
-	# Identify rivers/streams along boundary
-
-	for boundary in boundaries:
-		[ boundary['min_bbox'], boundary['max_bbox'] ] = get_bbox(boundary['geometry']['coordinates'])  # Note: in geojson
+	for boundary in municipality_border_segments:
+		[ boundary['min_bbox'], boundary['max_bbox'] ] = get_bbox(boundary['geometry']['coordinates'], perimeter=50)
 
 	count_boundary = 0
 	for river in nve_rivers:
 		if "waterway" in river['attributes']:
 			all_hits = set()
-			for boundary in boundaries:
+
+			for boundary in municipality_border_segments:
 				if (boundary['min_bbox'][0] <= river['max_bbox'][0] and boundary['max_bbox'][0] >= river['min_bbox'][0]
 					and boundary['min_bbox'][1] <= river['max_bbox'][1] and boundary['max_bbox'][1] >= river['min_bbox'][1]):
 						hits = hausdorff_distance(river['geometry']['paths'], boundary['geometry']['coordinates'], limit=50, hits=True)
@@ -1326,7 +1464,7 @@ def load_nve_rivers(filename):
 							count_boundary += 1
 							break
 
-	message ("\t%i boundary rivers identified\n" % count_boundary)
+	message ("%i found\n" % count_boundary)
 
 
 	# Pass 4: Output Elvis geojson
@@ -1365,7 +1503,7 @@ def load_nve_rivers(filename):
 		file = open(filename2, "w")
 		json.dump(feature_collection, file, indent=2, ensure_ascii=False)
 		file.close()
-		message ("\tSaved %i NVE rivers and streams to '%s'\n" % (nve_river_count, filename))
+		message ("\tSaved %i NVE rivers and streams to '%s'\n" % (nve_river_count, filename2))
 
 	if json_output:  # No further actions if geojson output
 		return
@@ -1407,7 +1545,7 @@ def load_nve_rivers(filename):
 						river1['tags']['name'] = river2['attributes']['name']
 						river1['elvis'] = river2['attributes']['elvId']
 						count_main += 1
-					elif river2['attributes']['elveordenStrahler'] > 1:
+					elif river2['attributes']['elveordenStrahler'] > 1:  # Avoid end branches
 						river1['elvis'] = river2['attributes']['elvId']
 
 					river1['decline'] = "Elvis"
@@ -1417,7 +1555,10 @@ def load_nve_rivers(filename):
 					count_match += 1
 					break
 
-	message ("%i%% matched\n" % (100 * count_match / count_river))
+	if count_river > 0:
+		message ("%i%% matched\n" % (100 * count_match / count_river))
+	else:
+		message ("0 matched\n")
 	message ("\t%i main rivers identified\n" % count_main)
 	message ("\t%i rivers/streams reversed\n" % count_reverse)
 
@@ -1698,6 +1839,16 @@ def create_border_segments(patch, members, gml_id, match, reverse):
 
 
 
+# Function for getting priority of feature objects.
+
+def feature_order(feature):
+	if feature['object'] in object_sorting_order:
+		return object_sorting_order.index(feature['object'])
+	else:
+		return 100
+
+
+
 # Fix data structure:
 # - Split polygons into segments
 # - Order direction of ways for coastline, lakes, rivers and islands
@@ -1719,15 +1870,6 @@ def split_polygons():
 				return max(patch.index(coordinates[0]), patch.index(coordinates[1]))
 		else:
 			return patch.index(coordinates[1])
-
-
-	# Function for getting priority of feature objects.
-
-	def feature_order(feature):
-		if feature['object'] in object_sorting_order:
-			return object_sorting_order.index(feature['object'])
-		else:
-			return 100
 
 
 	message ("Decompose polygons into segments...\n")
@@ -1753,7 +1895,10 @@ def split_polygons():
 				message ("\r\t%i " % count)
 			count -= 1
 			matching_polygon = []
-			reverse_segments = feature['object'] in ["Havflate", "Innsjø", "InnsjøRegulert", "ElvBekk", "FerskvannTørrfall"]
+
+			reverse_segments = False
+			if not historic or historic['year'] > "2020":
+				reverse_segments = feature['object'] in ["Havflate", "Innsjø", "InnsjøRegulert", "ElvBekk", "FerskvannTørrfall"]
 
 			for patch in feature['coordinates']:
 				matching_segments = []
@@ -1789,9 +1934,10 @@ def split_polygons():
 
 						# Correct direction of segments. Note sorting order of features in outer loop.
 
-						if reverse_segments and segment['object'] != "FiktivDelelinje":
+						if (feature['object'] in ["Havflate", "Innsjø", "InnsjøRegulert", "ElvBekk", "FerskvannTørrfall"]
+								and segment['object'] != "FiktivDelelinje"):
 							segment['used'] += 1
-							if same_direction and (segment['used'] == 1 or feature['object'] == "Havflate"):
+							if reverse_segments == same_direction and (segment['used'] == 1 or feature['object'] == "Havflate"):		
 								segment['coordinates'].reverse()  # Water objects have reverse direction
 								segment['extras']['reversed'] = "yes"
 
@@ -1823,6 +1969,7 @@ def split_polygons():
 				# Backup output
 				feature['type'] = "LineString"
 				feature['coordinates'] = feature['coordinates'][0]
+				feature['tags']['FIXME'] = "Repair polygon"
 
 	message ("\r\t%i splits\n" % split_count)
 
@@ -2144,8 +2291,11 @@ def combine_segments():
 
 	# Part 2: Combine segments within each feature polygon (not across features/polygons)
 
+	ordered_features = copy.copy(features)  # Shallow copy of list
+	ordered_features.sort(key=feature_order)  # Sort first coastline, lakes, rivers etc.
+
 	combinations = []  # Will contain all sequences to combine
-	for feature in features:
+	for feature in ordered_features:
 		if feature['type'] == "Polygon":
 			for patch in feature['members']:
 				first = True
@@ -2431,7 +2581,7 @@ def identify_intersections():
 
 	global delete_count
 
-	message ("Identify intersections...\n")
+	message ("Identify line intersections...\n")
 
 	lap = time.time()
 	node_count = len(nodes)
@@ -2483,7 +2633,7 @@ def identify_intersections():
 
 							# First check if stream node may be removed og slightly relocated
 
-							if segment['object'] not in ['Arealbrukgrense', 'FiktivDelelinje']:  # KantUtsnitt ?
+							if segment['object'] not in ['Arealbrukgrense', 'FiktivDelelinje']:
 								nodes.add( node )
 
 							elif index1 not in [0, len(feature['coordinates']) - 1] and node not in nodes:
@@ -2683,6 +2833,8 @@ def fix_stream_direction():
 			stream_count += 1
 
 	message ("\t%i streams\n" % stream_count)
+	if stream_count == 0:
+		return
 
 	# Include lakes as junctions
 
@@ -2832,7 +2984,12 @@ def get_ssr_name (feature, name_categories):
 		sea = ("Sjø" in found_places[0]['tags']['ssr:type'])
 		for place in found_places:
 			if not sea or "Sjø" in place['tags']['ssr:type']:
-				alt_names.append("%s [%s %s]" % (place['tags']['name'], place['tags']['ssr:type'], place['tags']['ssr:stedsnr']))
+				source = ""
+				if "N100" in place['tags']:
+					source = "N100 "
+				elif "N50" in place['tags']:
+					source = "N50 "
+				alt_names.append("%s [%s%s %s]" % (place['tags']['name'], source, place['tags']['ssr:type'], place['tags']['ssr:stedsnr']))
 				alt_names_short.append(place['tags']['name'])
 
 		# Check if NVE name is already present
@@ -2844,7 +3001,7 @@ def get_ssr_name (feature, name_categories):
 			alt_names_short.insert(0, feature['tags']['name'])
 			nve = 1
 
-		# Use N100 rank if present
+		# Use N100/N50 rank if present
 		if any(["N100" in place['tags'] for place in found_places]):
 			n100_places = [place for place in found_places if "N100" in place['tags']]
 			n100_places.sort(key=lambda place: place['tags']['N100'])
@@ -2855,9 +3012,9 @@ def get_ssr_name (feature, name_categories):
 
 			if len(alt_names) > 1 + nve:
 				if len(n100_places) > 1 and n100_places[0]['tags']['N100'] == n100_places[1]['tags']['N100']:
-					feature['tags']['FIXME'] = "Choose N100 name: " + ", ".join(alt_names)					
+					feature['tags']['FIXME'] = "Choose %s name: " % "N100" + ", ".join(alt_names)					
 				else:
-					feature['tags']['FIXME'] = "Verify N100 name: " + ", ".join(alt_names)
+					feature['tags']['FIXME'] = "Verify %s name: " % "N100" + ", ".join(alt_names)
 				feature['tags']['ALT_NAME'] = ";".join(alt_names_short)
 			name_count += 1
 
@@ -2871,8 +3028,6 @@ def get_ssr_name (feature, name_categories):
 #					feature['tags']['name'] = name  # Add back NVE name
 					feature['extras']['ssr:type'] = feature['tags'].pop("ssr:type", None)
 
-#					if "N100" in place['tags']:
-#						feature['extras']['N100'] = feature['tags'].pop("N100", None)
 					if len(alt_names) > 1 + nve:
 						feature['tags']['FIXME'] = "Verify NVE name: " + ", ".join(alt_names)
 						feature['tags']['ALT_NAME'] = ";".join(alt_names_short)
@@ -2897,13 +3052,19 @@ def get_ssr_name (feature, name_categories):
 
 			# Not able to determine only one name
 			else:
-				# If same type, select longest name
-				same_places = [ place for place in found_places if place['tags']['ssr:type'] == found_places[0]['tags']['ssr:type'] ]
-				same_places.sort(key=lambda name: len(name['tags']['name']), reverse=True)
-					
+				# For wetland select N50 name if available
+				if found_places[0]['tags']['ssr:type'] in ["myr", "våtmarksområde"] and any(["N50" in place['tags'] for place in found_places]):
+					same_places = [ place for place in found_places if "N50" in place['tags'] ]
+					same_places.sort(key=lambda name: int(name['tags']['N50']))
+					feature['tags']['FIXME'] = "Verify N50 name: " + ", ".join(alt_names)			
+				else:
+					# If same type, select longest name
+					same_places = [ place for place in found_places if place['tags']['ssr:type'] == found_places[0]['tags']['ssr:type'] ]
+					same_places.sort(key=lambda name: len(name['tags']['name']), reverse=True)	
+					feature['tags']['FIXME'] = "Choose name: " + ", ".join(alt_names)
+
 				feature['tags'].update(same_places[0]['tags'])
 				feature['extras']['ssr:type'] = feature['tags'].pop("ssr:type", None)		
-				feature['tags']['FIXME'] = "Choose name: " + ", ".join(alt_names)
 				feature['tags']['ALT_NAME'] = ";".join(alt_names_short)
 
 		# Warning for equal rank names ("sidestilte navn")
@@ -2971,7 +3132,7 @@ def get_place_names():
 		for feature in data['features']:
 			tags = {}
 			for key, value in iter(feature['properties'].items()):
-				if "name" in key or key in ["ssr:stedsnr", "TYPE", "N100"]:
+				if "name" in key or key in ["ssr:stedsnr", "TYPE", "N100", "N50"]:
 					if key == "TYPE":
 						tags['ssr:type'] = value
 					else:
@@ -3053,7 +3214,7 @@ def get_place_names():
 	lake_elevations = []
 
 	for feature in features:
-		if feature['object'] in ["Innsjø", "InnsjøRegulert"]:
+		if feature['object'] in ["Innsjø", "InnsjøRegulert"] and feature['type'] == "Polygon":
 
 			lake_node = get_ssr_name(feature, name_category)
 			area = abs(multipolygon_area(feature['coordinates']))
@@ -3142,7 +3303,7 @@ def get_place_names():
 				if (feature['min_bbox'][0] <= place['coordinate'][0] <= feature['max_bbox'][0]
 						and feature['min_bbox'][1] <= place['coordinate'][1] <= feature['max_bbox'][1]
 						and not (feature['object'] == "ElvBekk" and place['tags']['ssr:type'] == "dam")):
-					distance, index = shortest_distance(feature['coordinates'], place['coordinate'])
+					distance, index = shortest_distance(place['coordinate'], feature['coordinates'])
 					if distance < min_distance:
 						min_distance = distance
 						min_index = index
@@ -3172,7 +3333,15 @@ def get_place_names():
 				if tags["ssr:type"] == "dam":
 					tags["waterway"] = "dam"
 				tags['SSR_WATERWAY'] = tags.pop("ssr:type", None)
-				create_point(point, tags, object_type = "Stedsnavn")
+
+				# Check whether point is inside historic municipality boundary
+				if historic:
+					for boundary in municipality_border:  # Including exclaves and multiple polygons (Kinn)
+						if inside_multipolygon(point, boundary):
+							create_point(point, tags, object_type = "Stedsnavn")
+							break
+				else:
+					create_point(point, tags, object_type = "Stedsnavn")
 
 	# Assign matched place name to feature
 	for feature in rivers:
@@ -3205,6 +3374,15 @@ def get_place_names():
 	get_category_place_names(["Alpinbakke"], ["alpinanlegg", "skiheis"])  # Piste
 	get_category_place_names(["Steintipp"], ["dam"])  # Dam
 #	get_category_place_names(["Foss"], ["foss", "stryk"])  # Waterfall (point)
+
+	# Clean up tags
+
+	for elements in [features, segments]:
+		for element in elements:
+			if element['object'] != "Stedsnavn":
+				for tag in ["N100", "N50"]:
+					if tag in element['tags']:
+						del element['tags'][ tag ]
 
 	if lake_ele:
 		message ("\r\t%i extra lake elevations found\n" % lake_ele_count)
@@ -3515,11 +3693,14 @@ if __name__ == '__main__':
 	start_time = time.time()
 	message ("\n-- n50osm v%s --\n" % version)
 
-	features = []        # All geometry and tags
-	segments = []        # Line segments which are shared by one or more polygons
-	nodes = set()        # Common nodes at intersections, including start/end nodes of segments [lon,lat]
-	elevations = {}		 # Elevations fetched from api
-	building_tags = {}   # Conversion table from building type to osm tag
+	features = []        	# All geometry and tags
+	segments = []        	# Line segments which are shared by one or more polygons
+	nodes = set()        	# Common nodes at intersections, including start/end nodes of segments [lon,lat]
+	elevations = {}		 	# Elevations fetched from api
+	building_tags = {}   	# Conversion table from building type to osm tag
+
+	municipality_border = []			# Boundary of municiplaity (multipolygon)
+	municipality_border_segments = []	# The separate segments of the municipality boundary (lines)
 
 	# Parse parameters
 
@@ -3532,11 +3713,12 @@ if __name__ == '__main__':
 	# Get municipality
 
 	municipality_query = sys.argv[1]
-	[municipality_id, municipality_name, municipality_bbox] = get_municipality_name(municipality_query)
-	if municipality_id is None:
-		sys.exit("Municipality '%s' not found\n" % municipality_query)
-	else:
-		message ("Municipality:\t%s %s\n" % (municipality_id, municipality_name))
+	get_historic = "-historic" in sys.argv
+	[municipality_id, municipality_name, historic] = get_municipality_name(municipality_query, get_historic)
+	message ("Municipality:\t%s %s\n" % (municipality_id, municipality_name))
+
+	if historic:
+		message ("Historic data:\t%s %s (%s)\n" % (historic['id'], historic['name'], historic['year']))
 
 	# Get N50 data category
 
@@ -3551,7 +3733,7 @@ if __name__ == '__main__':
 	else:
 		data_category = "Arealdekke"
 
-	message ("N50 category:\t%s\n" % data_category)
+	message ("N50 category:\t%s\n\n" % data_category)
 
 	# Get other options
 
@@ -3567,6 +3749,8 @@ if __name__ == '__main__':
 		elvis_output = True
 
 	output_filename = "n50_%s_%s_%s" % (municipality_id, municipality_name.replace(" ", "_"), data_category)
+	if historic:
+		output_filename = "n50_%s_%s_%s_%s" % (historic['id'], historic['name'].replace(" ", "_"), data_category, historic['year'])
 	if debug:
 		output_filename += "_debug"
 
@@ -3575,13 +3759,14 @@ if __name__ == '__main__':
 	if data_category == "BygningerOgAnlegg":
 		load_building_types()
 
+	load_municipality_boundary(output_filename)
 	load_n50_data(municipality_id, municipality_name, data_category)
-	if data_category == "Arealdekke" and get_nve:
-		load_nve_rivers(output_filename)
 
 	if json_output:
 		save_geojson(output_filename + ".geojson")
 	else:
+		if data_category == "Arealdekke" and get_nve:
+			load_nve_rivers(output_filename)
 		split_polygons()
 		if data_category == "Arealdekke":
 			find_islands()  # Note: "Havflate" is removed at the end of this process
