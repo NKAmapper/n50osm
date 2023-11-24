@@ -64,6 +64,12 @@ Paramters:
 ### Changelog
 
 n50osm.py
+* 2.0: Supports new Kartverket 2023 version of N50:
+  - Centerline waterway=river included in N50 source (earlier from NVE Elvenett)
+  - Optimized matching of NVE Elvenett for identifying connected waterways
+  - Support for future waterway=ditch and canal
+  - Supports man_made=quay and breakwater separated from caostline
+  - Also summarizes source dates in histogram table
 * 1.8: Support historic municipalities; Output municipality boarder file; Optimized name selection; Minor bug fixes.
 * 1.7: Improved handling of rivers and streams:
   - Match with waterways from NVE Elvenett (Elvis)
