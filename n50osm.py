@@ -16,7 +16,7 @@ from xml.etree import ElementTree as ET
 import utm
 
 
-version = "1.8.0"
+version = "2.0.0"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -48,7 +48,7 @@ merge_grid =    True 	# Merge polygon grids (wood and rivers)
 data_categories = ["AdministrativeOmrader", "Arealdekke", "BygningerOgAnlegg", "Hoyde", "Restriksjonsomrader", "Samferdsel", "Stedsnavn"]
 
 avoid_objects = [  # Object types to exclude from output
-	'ÅpentOmråde', 'Tregruppe',  # Arealdekke
+	'ÅpentOmråde', 'Tregruppe', 'InnsjøMidtlinje',  # Arealdekke
 	'GangSykkelveg', 'VegSenterlinje', 'Vegsperring',  # Samferdsel
 	'Forsenkningskurve', 'Hjelpekurve', 'Høydekurve',  # Hoyde
 	'PresentasjonTekst',  # Stedsnavn
@@ -56,7 +56,8 @@ avoid_objects = [  # Object types to exclude from output
 ]
 
 auxiliary_objects = ['Arealbrukgrense', 'Dataavgrensning', 'FiktivDelelinje',
-					'InnsjøElvSperre', 'InnsjøInnsjøSperre', 'ElvBekkKant', 'Havflate', 'Innsjøkant', 'InnsjøkantRegulert', 'FerskvannTørrfallkant']
+					'InnsjøElvSperre', 'InnsjøInnsjøSperre', 'ElvBekkKant', 'ElveKant',
+					'Havflate', 'Innsjøkant', 'InnsjøkantRegulert', 'FerskvannTørrfallkant']
 
 avoid_tags = [  # N50 properties to exclude from output (unless debug)
 	'oppdateringsdato', 'datafangstdato',
@@ -64,7 +65,7 @@ avoid_tags = [  # N50 properties to exclude from output (unless debug)
 ]
 
 object_sorting_order = [  # High priority will ensure ways in same direction
-	'Havflate', 'Innsjø', 'InnsjøRegulert', 'ElvBekk', 'FerskvannTørrfall', 'SnøIsbre',
+	'Havflate', 'Innsjø', 'InnsjøRegulert', 'ElvBekk', 'Elv', 'FerskvannTørrfall', 'SnøIsbre',
 	'BymessigBebyggelse', 'Tettbebyggelse', 'Hyttefelt', 'Industriområde', 'Gravplass', 'Park',
 	'SportIdrettPlass', 'Alpinbakke', 'Golfbane', 'Lufthavn', 'Rullebane', 'Skytefelt',
 	'DyrketMark', 'Steinbrudd', 'Steintipp',' Myr', 'Skog'
@@ -72,7 +73,7 @@ object_sorting_order = [  # High priority will ensure ways in same direction
 
 segment_sorting_order = [  # High priority will ensure longer ways
 	'Kystkontur', 'HavInnsjøSperre', 'HavElvSperre',
-	'Innsjøkant', 'InnsjøkantRegulert', 'InnsjøInnsjøSperre', 'InnsjøElvSperre', 'ElvBekkKant', 'FerskvannTørrfallkant',
+	'Innsjøkant', 'InnsjøkantRegulert', 'InnsjøInnsjøSperre', 'InnsjøElvSperre', 'ElvBekkKant', 'ElveKant', 'FerskvannTørrfallkant',
 	'Arealbrukgrense', 'FiktivDelelinje']
 
 osm_tags = {
@@ -81,7 +82,9 @@ osm_tags = {
 	'Alpinbakke':			{ 'landuse': 'winter_sports', 'piste:type': 'downhill' },  # Later also area=yes for closed ways
 	'BymessigBebyggelse':	{ 'landuse': 'retail' },
 	'DyrketMark':			{ 'landuse': 'farmland' },
+	'Elv':					{ 'natural': 'water', 'water': 'river' },
 	'ElvBekk':				{ 'waterway': 'stream' },  # Retagged later if river or area
+	'ElvMidtlinje':			{ 'waterway': 'river' },
 	'FerskvannTørrfall':	{ 'natural': 'water', 'water': 'river', 'intermittent': 'yes' },
 	'Flomløpkant':			{ 'intermittent': 'yes' },  # Incomplete river objects; fix manually in JOSM
 	'Foss':					{ 'waterway': 'waterfall' },
@@ -89,10 +92,11 @@ osm_tags = {
 	'Gravplass':			{ 'landuse': 'cemetery' },
 	'HavElvSperre':			{ 'natural': 'coastline' },
 	'HavInnsjøSperre':		{ 'natural': 'coastline' },
-	'Hyttefelt':			{ 'landuse': 'residential', 'residential': 'cabin' },
+	'Hyttefelt':			{ 'landuse': 'residential', 'residential': 'cabin' },  # Removed from 2023-11-20
 	'Industriområde':		{ 'landuse': 'industrial' },
 	'Innsjø':				{ 'natural': 'water' },
 	'InnsjøRegulert':		{ 'natural': 'water', 'water': 'reservoir' },
+	'KanalGrøft':			{ 'waterway': 'ditch' },
 	'Kystkontur':			{ 'natural': 'coastline' },
 	'Lufthavn':				{ 'aeroway': 'aerodrome' },
 	'Myr':					{ 'natural': 'wetland', 'wetland': 'bog' },
@@ -166,26 +170,39 @@ def tag_object(feature_type, geometry_type, properties, feature):
 		if geometry_type == "område":
 			tags['natural'] = "water"
 			tags['water'] = "river"
-		elif "vannBredde" in properties and properties['vannBredde'] > "2":  # >3 meter
+		elif ("vannBredde" in properties and properties['vannBredde'] > "2"
+				or "vannbredde" in properties and properties['vannbredde'] > "2"):  # >3 meter
 			tags['waterway'] = "river"
 		else:
 			tags['waterway'] = "stream"
 
-	elif feature_type == "Skytefelt" and data_category == "Restriksjonsomrader":  # Eception to Arealdekke
-		tags['landuse'] = "military"
+	elif feature_type == "KanalGrøft":
+		if ("vannBredde" in properties and properties['vannBredde'] > "2"
+				or "vannbredde" in properties and properties['vannbredde'] > "2"):  # >3 meter
+			tags['waterway'] = "canal"
+		else:
+			tags['waterway'] = "ditch"
+
+	elif feature_type == "Skytefelt" and data_category == "Restriksjonsomrader":  # Exception to Arealdekke
+		if "Sytefeltstatus" not in properties or properties['Skytefeltstatus'] == "I bruk":
+			tags['landuse'] = "military"
+
 
 	elif feature_type == "Bygning":
 		if "bygningstype" in properties:
 			if properties['bygningstype'] == "956":  # Turisthytte
 				if "betjeningsgrad" in properties:
-					if properties['betjeningsgrad'] == "B":  # Betjent
+					if properties['betjeningsgrad'] in ["B", "Betjent"]:
 						tags['tourism'] = "alpine_hut"
-					elif properties['betjeningsgrad'] == "S":  # Selvbetjent
+					elif properties['betjeningsgrad'] == ["S", "Selvbetjent"]:
 						tags['tourism'] = "wilderness_hut"
-					elif properties['betjeningsgrad'] in ["U", "D", "R"]:  # Ubetjent, dagstur, rastebu
+					elif properties['betjeningsgrad'] in ["U", "R", "Ubetjent", "Rastebu"]:
 						tags['amenity'] = "shelter"
 						tags['shelter_type'] = "basic_hut"
-					else:
+					elif properties['betjeningsgrad'] in ["D", "Serveringshytte"]:
+						tags['amenity'] = "cafe"
+						tags['hiking'] = "yes"
+					elif properties['betjeningsgrad'] in ["G", "Gapahuk"]:
 						tags['amenity'] = "shelter"
 						tags['shelter_type'] = "lean_to"
 				if "hytteeier" in properties:
@@ -235,7 +252,7 @@ def tag_object(feature_type, geometry_type, properties, feature):
 
 	# Collect set of remaining object types not handled
 
-	elif feature_type not in auxiliary_objects:
+	elif feature_type not in avoid_objects and feature_type not in auxiliary_objects:
 		missing_tags.add(feature_type)
 
 	# Additional tagging based on object properties from GML
@@ -430,7 +447,7 @@ def distance (point1, point2):
 # Compute closest distance from point p3 to line segment [s1, s2].
 # Works for short distances.
 
-def line_distance(s1, s2, p3):
+def line_distance(s1, s2, p3, get_point=False):
 
 	x1, y1, x2, y2, x3, y3 = map(math.radians, [s1[0], s1[1], s2[0], s2[1], p3[0], p3[1]])  # Note: (x,y)
 
@@ -468,18 +485,17 @@ def line_distance(s1, s2, p3):
 	y = y4 - y3
 	distance = 6371000 * math.sqrt( x*x + y*y )  # In meters
 
-	'''
-	# Project back to longitude/latitude
+	if get_point:
+		# Project back to longitude/latitude
 
-	x4 = x4 / math.cos(y4)
+		x4 = x4 / math.cos(y4)
 
-	lon = math.degrees(x4)
-	lat = math.degrees(y4)
+		lon = math.degrees(x4)
+		lat = math.degrees(y4)
 
-	return (lon, lat, distance)
-	'''
-
-	return distance
+		return (distance, (lon, lat))
+	else:
+		return distance
 
 
 
@@ -519,24 +535,24 @@ def coordinate_offset (node, distance):
 # Optional arguments:
 # - 'limit' will break early if distance is above the limit (meters)
 # - 'oneway' = True will only test p1 against p2, not the reverse
-# - 'hits' = True will return set of nodes which were within given 'limit'
+# - 'hits' = True will return list of index to nodes which were within given 'limit'
 
 def hausdorff_distance (p1, p2, limit = False, oneway = False, hits = False):
 
-	N1 = len(p1) - 1
-	N2 = len(p2) - 1
+	N1 = len(p1)  # Subtract 1 for circular polygons
+	N2 = len(p2)
 
 # Shuffling for small lists disabled
 #	random.shuffle(p1)
 #	random.shuffle(p2)
 
-	h = set()
+	h = []
 	cmax = 0
 	for i in range(N1):
 		no_break = True
 		cmin = 999999.9  # Dummy
 
-		for j in range(N2):
+		for j in range(N2 - 1):
 
 			d = line_distance(p2[j], p2[j+1], p1[i])
     
@@ -552,7 +568,7 @@ def hausdorff_distance (p1, p2, limit = False, oneway = False, hits = False):
 		if cmax > limit and limit and not hits:
 			return cmax
 		if cmin <= limit and hits:
-			h.add(p1[i])
+			h.append(i)
 
 	if oneway:
 		return cmax
@@ -563,7 +579,7 @@ def hausdorff_distance (p1, p2, limit = False, oneway = False, hits = False):
 		no_break = True
 		cmin = 999999.9  # Dummy
 
-		for j in range(N1):
+		for j in range(N1 - 1):
 
 			d = line_distance(p1[j], p1[j+1], p2[i])
     
@@ -1019,9 +1035,12 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 
 	# XML name space
 	ns_gml = "http://www.opengis.net/gml/3.2"
-	ns_app = "http://skjema.geonorge.no/SOSI/produktspesifikasjon/N50/20170401"
+	ns_app = "https://skjema.geonorge.no/SOSI/produktspesifikasjon/N50/20230401"
 	if historic:
-		ns_app = "http://skjema.geonorge.no/sosi/produktspesifikasjon/N50/20170401/"
+		if historic['year'] == "2022":
+			ns_app = "http://skjema.geonorge.no/SOSI/produktspesifikasjon/N50/20170401"
+		elif historic['year'] < "2022":
+			ns_app = "http://skjema.geonorge.no/sosi/produktspesifikasjon/N50/20170401/"
 
 	ns = {
 		'gml': ns_gml,
@@ -1032,8 +1051,7 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 
 	message ("Load N50 data from Kartverket...\n")
 
-	source_date = ["9", "0"]	 # First and last source date ("datafangstdato")
-	update_date = ["9", "0"]	 # First and last update date ("oppdateringsdato")
+	source_date = {}
 	object_count = {}
 	missing_tags = set()
 
@@ -1043,7 +1061,7 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 	if historic:
 		n50_url = n50_url.replace("N50Kartdata", "N50KartdataHistoriskeData" + historic['year'])
 
-	for utm_zone in [32, 35, 33]:
+	for utm_zone in [32, 35, 33]:  # Try 32, 35 first
 		filename = "Basisdata_%s_%s_258%i_N50Kartdata_GML" % (municipality_id, municipality_name, utm_zone)
 		if historic:
 			filename = "Basisdata_%s_%s_258%i_N50KartdataHistoriskeData%s_GML" % (historic['id'], historic['name'], utm_zone, historic['year'])
@@ -1144,19 +1162,17 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 #			else:
 #				message ("\t*** SEGMENT TOO SHORT: %s\n" % gml_id)
 
-			# Update min/max dates for information
+			# Count source dates for information (10 year intervals)
 
+			year = ""
+#			if "oppdateringsdato" in properties:
+#				year = properties['oppdateringsdato'][:3] + "0"
 			if "datafangstdato" in properties:
-				if properties['datafangstdato'] < source_date[0] and properties['datafangstdato'] > "1801":
-					source_date[0] = properties['datafangstdato']
-				if properties['datafangstdato'] > source_date[1]:
-					source_date[1] = properties['datafangstdato']
-
-			if "oppdateringsdato" in properties:
-				if properties['oppdateringsdato'] < update_date[0] and properties ['oppdateringsdato'] > "1801":
-					update_date[0] = properties['oppdateringsdato']
-				if properties['oppdateringsdato'] > update_date[1]:
-					update_date[1] = properties['oppdateringsdato']
+				year = properties['datafangstdato'][:3] + "0"
+			if year > "1801":
+				if year not in source_date:
+					source_date[ year ] = 0
+				source_date[ year ] += 1
 
 	if data_category == "Arealdekke":
 		count_type = load_man_made_features(zip_file, filename)
@@ -1172,8 +1188,12 @@ def load_n50_data (municipality_id, municipality_name, data_category):
 	if missing_tags:
 		message ("\tNot tagged: %s\n" % (", ".join(missing_tags.difference("Havflate"))))
 
-	message ("\tSource dates: %s - %s\n" % (source_date[0], source_date[1]))
-	message ("\tUpdate dates: %s - %s\n" % (update_date[0], update_date[1]))
+	total = sum(source_date.values())
+	if total > 0:
+		message ("\tSource dates:\n")	
+		for year in sorted(source_date.keys()):
+			message ("\t\t%s:\t%2i%%\n" % (year, round(100 * source_date[ year ] / total)))
+
 	message ("\t%i feature objects, %i segments\n" % (len(features), len(segments)))
 	message ("\tRun time %s\n" % (timeformat(time.time() - lap)))
 
@@ -1205,15 +1225,17 @@ def load_man_made_features(zip_file, filename):
 				if feature_type not in count_objects:
 					count_objects[ feature_type ] = 0
 				count_objects[ feature_type ] += 1
+				found = False
 
 				if feature_type in ["KaiBrygge", "Molo"]:
 					coordinate_set = set(coordinates)
 
 					for segment in segments:
-						if set(segment['coordinates']).issubset(coordinate_set):
+						if set(segment['coordinates']).issubset(coordinate_set):  # Complete segment contained within quai, breakwater
 							segment['tags'].update(osm_tags[ feature_type ])
+							found = True
 
-				elif feature_type == "Dam":
+				if feature_type == "Dam" or not found:
 					gml_id = feature[0].attrib["{%s}id" % ns_gml]
 					entry = {
 						'object': feature_type,
@@ -1367,79 +1389,80 @@ def load_nve_rivers(filename):
 
 	# Also get bbox for N50 rivers
 	for feature in features:
-		if feature['object'] == "ElvBekk":
-			[ feature['min_bbox'], feature['max_bbox'] ] = get_bbox(feature['coordinates'])		
+		if feature['object'] in ["ElvBekk", "Elv", "KanalGrøft", "ElvMidtlinje", "ElvelinjeFiktiv"]:
+			[ feature['min_bbox'], feature['max_bbox'] ] = get_bbox(feature['coordinates'])	
+			if feature['object'] == "ElvMidtlinje":
+				feature['direction'] = "Midtlinje"  # River center lines have correct direction in N50 (object introduced 2023)
 
 
 	# Pass 2: Identify river centerlines for riverbanks + within municipality
 
-	message ("\tIdentify river center lines ... ")
+	if historic and historic['year'] < "2023":
 
-	# Build list of riverbanks from N50
-	n50_riverbanks = []
-	for feature in features:
-		if feature['object'] == "ElvBekk" and feature['type'] == "Polygon":
-			n50_riverbanks.append(feature)
+		message ("\tIdentify river center lines ... ")
 
-	count_load = 0
+		# Build list of riverbanks from N50
+		n50_riverbanks = []
+		for feature in features:
+			if feature['object'] in ["ElvBekk", "Elv"] and feature['type'] == "Polygon":
+				n50_riverbanks.append(feature)
 
-	for river in nve_rivers:
+		count_load = 0
 
-		# Keep for riverbanks only
-		feature_type = river['attributes']['objektType']
-		if feature_type != "ElvBekkMidtlinje":
-			continue
+		for river in nve_rivers:
 
-		coordinates = river['geometry']['paths']
+			# Keep for riverbanks only
+			if river['attributes']['objektType'] != "ElvBekkMidtlinje":  # Note: Different object name NVE vs N50
+				continue
 
-		# Match with N50 riverbanks (avoid rivers outside of municipality boundary)
+			coordinates = river['geometry']['paths']
 
-		inside = False
-		for riverbank in n50_riverbanks:
-			if (river['min_bbox'][0] <= riverbank['max_bbox'][0] and river['max_bbox'][0] >= riverbank['min_bbox'][0]
-					and river['min_bbox'][1] <= riverbank['max_bbox'][1] and river['max_bbox'][1] >= riverbank['min_bbox'][1]):
-				inside = True
+			# Match with N50 riverbanks (avoid rivers outside of municipality boundary)
 
-				# Adjust end points slightly to match river polygon
-				for end in [ 0, -1 ]:
-					for point in riverbank['coordinates'][0]:  # Outer patch
-						if distance(point, coordinates[ end ]) < 0.1:  # Meters
-							coordinates[ end ] = point
-							break
+			inside = False
+			for riverbank in n50_riverbanks:
+				if (river['min_bbox'][0] <= riverbank['max_bbox'][0] and river['max_bbox'][0] >= riverbank['min_bbox'][0]
+						and river['min_bbox'][1] <= riverbank['max_bbox'][1] and river['max_bbox'][1] >= riverbank['min_bbox'][1]):
+					inside = True
 
-		if not inside:
-			continue
+					# Adjust end points slightly to match river polygon
+					for end in [ 0, -1 ]:
+						for point in riverbank['coordinates'][0]:  # Outer patch
+							if distance(point, coordinates[ end ]) < 0.1:  # Meters
+								coordinates[ end ] = point
+								break
 
-		entry = {
-			'object': 'ElvBekk',
-			'type': 'LineString',
-			'gml_id': "Elvis",
-			'elvis': river['attributes']['elvId'],  # Identification of elvis source + river branch id
-			'decline': 'Elvis',
-			'coordinates': coordinates,
-			'members': [],
-			'min_bbox': river['min_bbox'],
-			'max_bbox': river['max_bbox'],
-			'tags': {
-				'waterway': river['attributes']['waterway']
-			},
-			'extras': {
-				'objekttype': 'ElvBekk',
-				'geometri': 'midtlinje',
-				'elvis': river['attributes']['elvId'],
-				'centerline': 'yes'
-			}
-		}
+			if inside:
+				entry = {
+					'object': 'ElvMidtlinje',
+					'type': 'LineString',
+					'gml_id': "Elvis",
+					'elvis': river['attributes']['elvId'],  # Identification of elvis source + river branch id
+					'direction': 'Elvis',  # Correct direction in Elvis
+					'coordinates': coordinates,
+					'members': [],
+					'min_bbox': river['min_bbox'],
+					'max_bbox': river['max_bbox'],
+					'tags': {
+						'waterway': river['attributes']['waterway']
+					},
+					'extras': {
+						'objekttype': 'ElvMidtlinje',
+						'geometri': 'senterlinje',  # 'midtlinje',
+						'elvis': river['attributes']['elvId'],
+						'centerline': 'yes'
+					}
+				}
 
-		if "name" in river['attributes']:
-			entry['tags']['name'] = river['attributes']['name']
+				if "name" in river['attributes']:
+					entry['tags']['name'] = river['attributes']['name']
 
-		entry['extras'].update(river['attributes'])
-		features.append(entry)
-		river['used'] = True
-		count_load += 1
+				entry['extras'].update(river['attributes'])
+				features.append(entry)
+				river['used'] = True
+				count_load += 1
 
-	message ("%i NVE river centerlines inserted for %i riverbanks\n" % (count_load, len(n50_riverbanks)))
+		message ("%i NVE river centerlines inserted for %i riverbanks\n" % (count_load, len(n50_riverbanks)))
 
 
 	# Pass 3: Identify rivers/streams along municipality boundary
@@ -1458,7 +1481,8 @@ def load_nve_rivers(filename):
 				if (boundary['min_bbox'][0] <= river['max_bbox'][0] and boundary['max_bbox'][0] >= river['min_bbox'][0]
 					and boundary['min_bbox'][1] <= river['max_bbox'][1] and boundary['max_bbox'][1] >= river['min_bbox'][1]):
 						hits = hausdorff_distance(river['geometry']['paths'], boundary['geometry']['coordinates'], limit=50, hits=True)
-						all_hits.update(hits)
+						if len(hits) > 1:
+							all_hits.update(set(hits))
 						if len(all_hits) > 0.3 * len(river['geometry']['paths']) or len(all_hits) > 10:
 							river['attributes']['BOUNDARY'] = str(len(all_hits))
 							count_boundary += 1
@@ -1505,19 +1529,67 @@ def load_nve_rivers(filename):
 		file.close()
 		message ("\tSaved %i NVE rivers and streams to '%s'\n" % (nve_river_count, filename2))
 
-	if json_output:  # No further actions if geojson output
+	if json_output:  # No further actions if geojson output only
 		return
 
 
-	# Pass 5: Match to verify stream/river direction + tag main rivers with name
+	# Pass 5: Combine short stream connections at riverbanks
 
-	count_rivers = sum((f['object'] == "ElvBekk" and f['type'] == "LineString" and "elvis" not in f) for f in features)
+	if simplify:
+		# Select waterways which have not been matched
+		n50_rivers = []
+		for river in features:
+			if river['object'] in ["ElvBekk", "KanalGrøft", "ElvelinjeFiktiv"] and river['type'] == "LineString" and "elvis" not in river:
+				n50_rivers.append(river)
+
+		count_combine = 0
+		for river1 in features[:]:
+			if river1['object'] == "ElvMidtlinje" and "name" not in river1['tags']:  # name only relevant before 2023
+				found = False
+				for river2 in n50_rivers:
+
+					if river1['coordinates'][0] == river2['coordinates'][-1]:
+						river2['coordinates'] = river2['coordinates'] + river1['coordinates'][1:]
+						found = True
+					elif river1['coordinates'][0] == river2['coordinates'][0]:
+						river2['coordinates'] = list(reversed(river2['coordinates'])) + river1['coordinates'][1:]
+						river2['extras']['reversed'] = "Elvis"
+						found = True
+
+					# Check if ElvMidtlinje might have wrong direction (or exit from river area)
+#					elif river1['coordinates'][-1] == river2['coordinates'][-1] or river1['coordinates'][-1] == river2['coordinates'][0]:
+#						if "direction" in river1:
+#							del river1['direction']
+#						if "waterway" in river2['tags'] and river2['tags']['waterway'] != "river":
+#							river1['tags']['waterway'] = river2['tags']['waterway']
+
+					if found:
+						river2['direction'] = "Elvis"  # Confirmed direction
+						features.remove(river1)
+						n50_rivers.remove(river2)
+						count_combine += 1
+						break
+
+		if count_combine > 0:
+			message ("\t%i short river connections combined\n" % count_combine)
+
+	# Remove ElvelinjeFiktiv; not needed anymore
+
+	for river in features[:]:
+		if river['object'] == "ElvelinjeFiktiv":
+			features.remove(river)
+
+
+	# Pass 6: Match to verify stream/river direction + tag main rivers with name
+
+	count_rivers = sum((f['object'] in ["ElvBekk", "KanalGrøft", "ElvMidtlinje"] and f['type'] == "LineString" and "elvis" not in f)
+						for f in features)
 	message ("\tMatching %i rivers/streams ... " % count_rivers)
 
 	# Select all NVE rivers if stream direction check, or main NVE rivers otherwise
 	nve_selection_rivers = []
 	for river in nve_rivers:
-		if river['attributes']['objektType'] == "ElvBekk" and (turn_stream or "name" in river['attributes']):
+		if river['attributes']['objektType'] in ["ElvBekk", "ElvBekkMidtlinje"] and (turn_stream or "name" in river['attributes']):
 			nve_selection_rivers.append(river)
 
 	count_river = 0
@@ -1526,34 +1598,69 @@ def load_nve_rivers(filename):
 	count_main = 0
 
 	for river1 in features:
-		if river1['object'] == "ElvBekk" and river1['type'] == "LineString" and "elvis" not in river1:
+		if river1['object'] in ["ElvBekk", "KanalGrøft", "ElvMidtlinje"] and river1['type'] == "LineString" and "elvis" not in river1:
 			count_river += 1
+			all_hits = set()
+			best_match = None
+			best_hits = 0
 
 			for river2 in nve_selection_rivers[:]:
 				if (river1['min_bbox'][0] <= river2['max_bbox'][0] and river1['max_bbox'][0] >= river2['min_bbox'][0]
-						and river1['min_bbox'][1] <= river2['max_bbox'][1] and river1['max_bbox'][1] >= river2['min_bbox'][1]
-						and hausdorff_distance(river1['coordinates'], river2['geometry']['paths'], limit=1) < 1):
+						and river1['min_bbox'][1] <= river2['max_bbox'][1] and river1['max_bbox'][1] >= river2['min_bbox'][1]):
 
-					# NVE assumed to have correct direction
-					if turn_stream and distance(river1['coordinates'][0], river2['geometry']['paths'][0]) > 1:
+					hits = hausdorff_distance(river1['coordinates'], river2['geometry']['paths'], limit=5, hits=True)
+					if len(hits) > 1:
+						all_hits.update(set(hits))
+						if len(hits) > best_hits:
+							best_hits = len(hits)
+							best_match = river2
+						if len(hits) == len(river1['coordinates']):
+							break
+
+			if len(all_hits) > 0.6 * len(river1['coordinates']):
+				river2 = best_match
+
+				# Turn river if needed. NVE assumed to have correct direction.
+				if turn_stream and "direction" not in river1:
+					hits_list = sorted(all_hits)
+					coordinates2 = river2['geometry']['paths']
+
+					# Check matching node order in NVE river
+					turn = False
+					d, i1 = shortest_distance(river1['coordinates'][0], coordinates2)
+					d, i2 = shortest_distance(river1['coordinates'][-1], coordinates2)
+
+					if i1 > i2:
+						turn = True
+					elif i1 == i2:
+						# If same node, get closest coordinate on NVE river
+						if i1 + 1 == len(river2['geometry']['paths']):
+							i1 -= 1
+						d, p1 = line_distance(coordinates2[i1], coordinates2[i1 + 1], river1['coordinates'][0], get_point=True)
+						d, p2 = line_distance(coordinates2[i1], coordinates2[i1 + 1], river1['coordinates'][-1], get_point=True)
+						if distance(coordinates2[i1], p1) > distance(coordinates2[i1], p2):
+							turn = True
+
+					if turn:
 						river1['coordinates'].reverse()
 						river1['extras']['reversed'] = "Elvis"
 						count_reverse += 1
 
-					if "name" in river2['attributes']:
-	#					river1['tags']['waterway'] = "river"
-						river1['tags']['name'] = river2['attributes']['name']
-						river1['elvis'] = river2['attributes']['elvId']
-						count_main += 1
-					elif river2['attributes']['elveordenStrahler'] > 1:  # Avoid end branches
-						river1['elvis'] = river2['attributes']['elvId']
+				if "name" in river2['attributes']:
+#					river1['tags']['waterway'] = "river"
+					river1['tags']['name'] = river2['attributes']['name']
+					river1['elvis'] = river2['attributes']['elvId']
+					count_main += 1
+				elif river2['attributes']['elveordenStrahler'] > 1:  # Avoid end branches
+					river1['elvis'] = river2['attributes']['elvId']
 
-					river1['decline'] = "Elvis"
-					river1['extras']['elvis'] = river2['attributes']['elvId']
-					river2['used'] = True
-					nve_selection_rivers.remove(river2)
-					count_match += 1
-					break
+				river1['direction'] = "Elvis"
+				river1['extras']['elvis'] = river2['attributes']['elvId']
+#				river2['used'] = True
+				count_match += 1
+
+			if all_hits:
+				river1['extras']['nve_match'] = str(len(all_hits))
 
 	if count_river > 0:
 		message ("%i%% matched\n" % (100 * count_match / count_river))
@@ -1563,25 +1670,25 @@ def load_nve_rivers(filename):
 	message ("\t%i rivers/streams reversed\n" % count_reverse)
 
 
-	# Pass 6: Identify longer rivers/streams along municipality boundary
+	# Pass 7: Replace with longer rivers/streams along municipality boundary
 
 	# Select all waterways
 	n50_rivers = []
 	for river in features:
-		if river['object'] == "ElvBekk" and river['type'] == "LineString":
+		if river['object'] in ["ElvBekk", "KanalGrøft", "ElvMidtlinje"] and river['type'] == "LineString":
 			n50_rivers.append(river)
 
 	count_load = 0
 	count_duplicates = 0
 	for river1 in nve_rivers:
-		if "used" not in river1 and "BOUNDARY" in river1['attributes']:
+		if "BOUNDARY" in river1['attributes'] and "used" not in river1:
 			found = False
 			waterway = "stream"
 
 			for river2 in n50_rivers[:]:
 				if (river1['min_bbox'][0] <= river2['max_bbox'][0] and river1['max_bbox'][0] >= river2['min_bbox'][0]
 						and river1['min_bbox'][1] <= river2['max_bbox'][1] and river1['max_bbox'][1] >= river2['min_bbox'][1]
-						and hausdorff_distance(river2['coordinates'], river1['geometry']['paths'], limit=1, oneway=True) < 1):
+						and hausdorff_distance(river2['coordinates'], river1['geometry']['paths'], limit=5, oneway=True) < 5):
 
 					# Adjust intersection point slightly for identical match
 					for end in [ 0, -1 ]:
@@ -1590,13 +1697,14 @@ def load_nve_rivers(filename):
 								river1['geometry']['paths'][ i ] = river2['coordinates'][ end ]
 								break
 
+					if river2['tags']['waterway'] in ["river", "canal"]:
+						waterway = river2['tags']['waterway']
+
 					# Remove duplicate short segment, alternatively tag Fixme
 					if no_duplicate:
 						features.remove(river2)
 					else:
 						river2['tags']['FIXME'] = "Consider duplicate"
-						if river2['tags']['waterway'] == "river":
-							waterway = "river"
 
 					n50_rivers.remove(river2)
 					count_duplicates += 1
@@ -1604,11 +1712,11 @@ def load_nve_rivers(filename):
 
 			if found:
 				entry = {
-					'object': 'ElvBekk',
+					'object': river1['attributes']['objektType'],
 					'type': 'LineString',
 					'gml_id': "Elvis",
 					'elvis': river1['attributes']['elvId'],  # Identification of elvis source + river branch id
-					'decline': 'Elvis',
+					'direction': 'Elvis',
 					'coordinates': river1['geometry']['paths'],
 					'members': [],
 					'tags': {
@@ -1616,7 +1724,7 @@ def load_nve_rivers(filename):
 						'FIXME': "Connect boundary " + waterway
 					},
 					'extras': {
-						'objekttype': 'ElvBekk',
+						'objekttype': river1['attributes']['objektType'],
 						'geometri': 'senterlinje',
 						'boundary': river1['attributes']['elvId']
 					}
@@ -1632,13 +1740,13 @@ def load_nve_rivers(filename):
 		message ("\t%i extra rivers/streams added along municipality boundary; %i short duplicates identified\n" % (count_load, count_duplicates))
 
 
-	# Pass 7: Combine NVE river segments into longer ways and add to features
+	# Pass 8: Combine matched NVE river segments into longer ways
 
 	if simplify:
 		# Selected waterways which have been matched and which are not boundary rivers
 		n50_rivers = []
 		for river in features:
-			if "elvis" in river and river['object'] == "ElvBekk" and "boundary" not in river['extras']:
+			if "elvis" in river and river['object'] in ["ElvBekk", "KanalGrøft", "ElvMidtlinje"] and "boundary" not in river['extras']:
 				n50_rivers.append(river)
 
 		count_combine = 0
@@ -1650,7 +1758,9 @@ def load_nve_rivers(filename):
 			while found and combination['coordinates'][0] != combination['coordinates'][-1]:
 				found = False
 				for river in n50_rivers[:]:
-					if river['elvis'] == combination['elvis'] and (("name" in river['tags']) == ("name" in combination['tags'])):  # Xor
+					if (river['elvis'] == combination['elvis']
+							and (("name" in river['tags']) == ("name" in combination['tags']))
+							and ((river['tags']['waterway'] in ["ditch", "canal"]) == (combination['tags']['waterway'] in ["ditch", "canal"]))):  # Xor
 
 						if river['coordinates'][0] == combination['coordinates'][-1]:
 							combination['coordinates'] = combination['coordinates'] + river['coordinates'][1:]
@@ -1663,6 +1773,8 @@ def load_nve_rivers(filename):
 #							combination['tags'].update(river['tags'])
 							if combination['tags']['waterway'] == "river" or river['tags']['waterway'] == "river":
 								combination['tags']['waterway'] = "river"
+							elif combination['tags']['waterway'] == "canal" or river['tags']['waterway'] == "canal":
+								combination['tags']['waterway'] = "canal"								
 							n50_rivers.remove(river)
 							features.remove(river)
 							count_segments += 1
@@ -1674,36 +1786,6 @@ def load_nve_rivers(filename):
 		if count_combine > 0:
 			message ("\t%i rivers combined\n" % count_combine)
 
-
-	# Pass 8: Combine short stream connections at riverbanks
-
-	if simplify:
-		# Select waterways which have not been matched
-		n50_rivers = []
-		for river in features:
-			if river['object'] == "ElvBekk" and river['type'] == "LineString" and "elvis" not in river:
-				n50_rivers.append(river)
-
-		count_combine = 0
-		for river1 in features[:]:
-			if river1['object'] == "ElvBekk" and river1['extras']['geometri'] == "midtlinje" and "name" not in river1['tags']:
-				found = False
-				for river2 in n50_rivers:
-					if river1['coordinates'][0] == river2['coordinates'][-1]:
-						river2['coordinates'] = river2['coordinates'] + river1['coordinates'][1:]
-						found = True
-					elif river1['coordinates'][0] == river2['coordinates'][0]:
-						river2['coordinates'] = list(reversed(river2['coordinates'])) + river1['coordinates'][1:]
-						river2['extras']['reversed'] = "Elvis"
-						found = True
-
-					if found:
-						river2['decline'] = "Elvis"  # Confirmed direction
-						features.remove(river1)
-						count_combine += 1
-						break
-		if count_combine > 0:
-			message ("\t%i river connections combined\n" % count_combine)
 
 	message ("\tRun time %s\n" % (timeformat(time.time() - lap)))
 
@@ -1898,7 +1980,7 @@ def split_polygons():
 
 			reverse_segments = False
 			if not historic or historic['year'] > "2020":
-				reverse_segments = feature['object'] in ["Havflate", "Innsjø", "InnsjøRegulert", "ElvBekk", "FerskvannTørrfall"]
+				reverse_segments = feature['object'] in ["Havflate", "Innsjø", "InnsjøRegulert", "ElvBekk", "Elv", "FerskvannTørrfall"]
 
 			for patch in feature['coordinates']:
 				matching_segments = []
@@ -1934,7 +2016,7 @@ def split_polygons():
 
 						# Correct direction of segments. Note sorting order of features in outer loop.
 
-						if (feature['object'] in ["Havflate", "Innsjø", "InnsjøRegulert", "ElvBekk", "FerskvannTørrfall"]
+						if (feature['object'] in ["Havflate", "Innsjø", "InnsjøRegulert", "ElvBekk", "Elv", "FerskvannTørrfall"]
 								and segment['object'] != "FiktivDelelinje"):
 							segment['used'] += 1
 							if reverse_segments == same_direction and (segment['used'] == 1 or feature['object'] == "Havflate"):		
@@ -2388,11 +2470,12 @@ def find_islands():
 
 	candidates = []
 	for feature in features:
-		if len(feature['members']) == 1 and len(feature['members'][0]) > 1 and \
-				feature['object'] not in ["Innsjø", "InnsjøRegulert", "ElvBekk", "Havflate", "FerskvannTørrfall"]:
+		if (len(feature['members']) == 1
+				and len(feature['members'][0]) > 1
+				and feature['object'] not in ["Innsjø", "InnsjøRegulert", "ElvBekk", "Elv", "Havflate", "FerskvannTørrfall"]):
 			found = True
 			for member in feature['members'][0]:
-				if segments[ member ]['object'] not in ['Kystkontur', "Innsjøkant", "InnsjøkantRegulert", "ElvBekkKant"]:
+				if segments[ member ]['object'] not in ['Kystkontur', "Innsjøkant", "InnsjøkantRegulert", "ElvBekkKant", "ElveKant"]:
 					found = False
 					break
 			if found:
@@ -2401,7 +2484,7 @@ def find_islands():
 	# Loop all inner objects of multipolygon lakes and sea
 
 	for feature in features:
-		if feature['object'] in ["Innsjø", "InnsjøRegulert", "ElvBekk", "Havflate", "FerskvannTørrfall"]:
+		if feature['object'] in ["Innsjø", "InnsjøRegulert", "ElvBekk", "Elv", "Havflate", "FerskvannTørrfall"]:
 			for i in range(1, len(feature['members'])):
 
 				# Do not use patch with intermittent edge
@@ -2480,7 +2563,7 @@ def find_islands():
 			# Examples: Kråkerøy (Fredrikstad), Holmen (Drammen), Øyna (Iveland)
 
 			for feature in features:
-				if (feature['object'] in ["Havflate", "Innsjø", "InnsjøRegulert", "ElvBekk", "FerskvannTørrfall"]
+				if (feature['object'] in ["Havflate", "Innsjø", "InnsjøRegulert", "ElvBekk", "Elv", "FerskvannTørrfall"]
 						and len(feature['members']) > 0
 						and any(segments[ member ]['object'] in ["HavElvSperre", "HavInnsjøSperre", "InnsjøInnsjøSperre",
 															"InnsjøElvSperre", "FerskvannTørrfallkant", "FiktivDelelinje"]
@@ -2488,7 +2571,7 @@ def find_islands():
 
 					for member in feature['members'][0]:  # Only outer patch
 						segment = segments[ member ]
-						if (segment['object'] in ["Kystkontur", "Innsjøkant", "InnsjøkantRegulert", "ElvBekkKant"]
+						if (segment['object'] in ["Kystkontur", "Innsjøkant", "InnsjøkantRegulert", "ElvBekkKant", "ElveKant"]
 								and member not in used_segments):  # Exclude any islands already identified
 							coastlines.append(segment)
 
@@ -2587,6 +2670,12 @@ def identify_intersections():
 	node_count = len(nodes)
 	delete_count = 0
 
+	# Make sure all ElvelinjeFiktiv are removed
+
+	for feature in features[:]:
+		if feature['object'] == "ElvelinjeFiktiv":
+			features.remove(feature)
+
 	# Create set of common nodes for segment intersections
 
 	for segment in segments:
@@ -2609,10 +2698,10 @@ def identify_intersections():
 		
 		# Loop streams to identify intersections with segments
 
-		count = sum([feature['type'] == "LineString" and feature['object'] == "ElvBekk" for feature in features])
+		count = sum([feature['type'] == "LineString" and feature['object'] in ["ElvBekk", "KanalGrøft", "ElvMidtlinje"] for feature in features])
 
 		for feature in features:
-			if feature['type'] == "LineString" and feature['object'] == "ElvBekk":
+			if feature['type'] == "LineString" and feature['object'] in ["ElvBekk", "KanalGrøft", "ElvMidtlinje"]:
 				[ feature['min_bbox'], feature['max_bbox'] ] = get_bbox(feature['coordinates'])
 				if count % 100 == 0:
 					message ("\r\t%i " % count)
@@ -2756,7 +2845,7 @@ def fix_stream_direction():
 		if end_junction in branch:  # Self-intersecting branch
 			return False
 
-		if "decline" in stream:  # Stream has confirmed direction
+		if "direction" in stream:  # Stream has confirmed direction
 			if end_junction == junctions[ stream['coordinates'][-1] ]['id']:  # Correct order
 				return True
 			else:
@@ -2776,8 +2865,8 @@ def fix_stream_direction():
 
 		if (elevations[ start_node ] - elevations[ end_node ] >= max_stream_error
 				or len(junctions[ start_node ]['streams']) == 1 and elevations[ start_node ] - min_ele >= max_stream_error):  # Confirmed	
-			stream['decline'] = "Nettverk"
-			stream['extras']['direction'] = "Nettverk"
+			stream['direction'] = "Network"
+			stream['extras']['direction'] = "Network"
 			if end_node == stream['coordinates'][0]:
 				stream['coordinates'].reverse()
 				stream['extras']['reversed'] = "yes"
@@ -2795,7 +2884,7 @@ def fix_stream_direction():
 				result = traverse_streams(start_junction, next_stream, min_ele, branch + [ end_junction ]) or result
 
 			if result:  # Confirmed stream found upwards
-				stream['decline'] = "Network"
+				stream['direction'] = "Network"
 				stream['extras']['direction'] = "Network"
 				if end_node == stream['coordinates'][0]:
 					stream['coordinates'].reverse()
@@ -2816,7 +2905,7 @@ def fix_stream_direction():
 	junction_id = 0
 
 	for feature in features:
-		if feature['object'] == "ElvBekk" and feature['type'] == "LineString":
+		if feature['object'] in ["ElvBekk", "KanalGrøft", "ElvMidtlinje"] and feature['type'] == "LineString":
 			streams.append(feature)
 			for i in [0,-1]:
 				if feature['coordinates'][i] in junctions:
@@ -2830,6 +2919,8 @@ def fix_stream_direction():
 					}
 			ele_list.add(feature['coordinates'][0])
 			ele_list.add(feature['coordinates'][-1])
+			if feature['object'] == "ElvMidtlinje":  # In case NVE river matching not run
+				feature['direction'] = "Midtlinje"
 			stream_count += 1
 
 	message ("\t%i streams\n" % stream_count)
@@ -2841,8 +2932,12 @@ def fix_stream_direction():
 	junction_set = set(junctions.keys())
 	lake_count = 0
 
+	water_polygons = ["Innsjø", "InnsjøRegulert", "ElvBekk"]
+	if not get_nve or historic and historic['year'] < "2023":
+		water_polygons.append("Elv")
+
 	for feature in features:
-		if feature['object'] in ["Innsjø", "InnsjøRegulert", "ElvBekk"] and feature['type'] == "Polygon":
+		if feature['object'] in water_polygons and feature['type'] == "Polygon":
 			lake_streams = []
 			lake_junctions = set()
 
@@ -2887,7 +2982,7 @@ def fix_stream_direction():
 				stream['coordinates'].reverse()
 				stream['extras']['direction'] = "Coastline"
 				stream['extras']['reversed'] = "Coastline"
-			stream['decline'] = "Coastline"
+			stream['direction'] = "Coastline"
 
 	# Load elevations
 
@@ -2901,7 +2996,7 @@ def fix_stream_direction():
 	for feature in streams:
 		ele_start = elevations[ feature['coordinates'][0] ]
 		ele_end = elevations[ feature['coordinates'][-1] ]
-		if ele_start is not None and ele_end is not None and "decline" not in feature:
+		if ele_start is not None and ele_end is not None and "direction" not in feature:
 
 			# Reverse direction of stream if within error margin
 			if ele_end - ele_start >= max_stream_error:
@@ -2909,15 +3004,15 @@ def fix_stream_direction():
 				reverse_count += 1
 				feature['extras']['reversed'] = "%.2f" % (ele_end - ele_start)
 				feature['extras']['direction'] = "%.2f" % (ele_end - ele_start)
-				feature['decline'] = ele_end - ele_start
+				feature['direction'] = "Elevation"
 			elif ele_start - ele_end >= max_stream_error:
-				feature['decline'] = ele_start - ele_end
+				feature['direction'] = "Elevation"
 				feature['extras']['direction'] = "%.2f" % (ele_start - ele_end)
 
 	# 2nd pass: Traverse stream "network" from stream with known direction and try determining direction of connected streams
 
 	for feature in streams:
-		if "decline" in feature:
+		if "direction" in feature:
 			start_junction = junctions[ feature['coordinates'][0] ]['id']
 			end_junction = junctions[ feature['coordinates'][-1] ]['id']
 			min_ele = elevations[ feature['coordinates'][-1] ]
@@ -2929,7 +3024,7 @@ def fix_stream_direction():
 	check_count = 0
 	reverse_count = 0
 	for feature in streams:
-		if "decline" not in feature:
+		if "direction" not in feature:
 			tag_fixme(feature['tags'], "Please check direction")
 			check_count += 1
 		if "reversed" in feature['extras']:
@@ -3288,7 +3383,7 @@ def get_place_names():
 	# Build list of rivers
 	rivers = []
 	for feature in features:
-		if feature['object'] in ["ElvBekk", "Dam"] and feature['type'] == "LineString":
+		if feature['object'] in ["ElvBekk", "KanalGrøft", "ElvMidtlinje", "Dam"] and feature['type'] == "LineString":
 			feature['min_bbox'], feature['max_bbox'] = get_bbox(feature['coordinates'], perimeter = 100)
 			if "name" in feature['tags']:
 				feature['tags']['ELVIS'] = feature['tags']['name']
@@ -3302,7 +3397,7 @@ def get_place_names():
 			for feature in rivers:
 				if (feature['min_bbox'][0] <= place['coordinate'][0] <= feature['max_bbox'][0]
 						and feature['min_bbox'][1] <= place['coordinate'][1] <= feature['max_bbox'][1]
-						and not (feature['object'] == "ElvBekk" and place['tags']['ssr:type'] == "dam")):
+						and not (feature['object'] in ["ElvBekk", "KanalGrøft", "ElvMidtlinje"] and place['tags']['ssr:type'] == "dam")):
 					distance, index = shortest_distance(place['coordinate'], feature['coordinates'])
 					if distance < min_distance:
 						min_distance = distance
@@ -3367,7 +3462,7 @@ def get_place_names():
 
 	# Get nanes for other features (areas)
 
-#	get_category_place_names(["ElvBekk"], ["elv", "elvesving", "lon"])	# River
+#	get_category_place_names(["ElvBekk", "Elv"], ["elv", "elvesving", "lon"])	# River
 	get_category_place_names(["SnøIsbre"], ["isbre", "fonn", "iskuppel"])  # Glacier
 	get_category_place_names(["Myr"], ["myr", "våtmarksområde"])  # Wetland
 	get_category_place_names(["Gravplass"], ["gravplass"])  # Cemetery
@@ -3707,7 +3802,7 @@ if __name__ == '__main__':
 	if len(sys.argv) < 2:
 		message ("Please provide municipality, and optional data category parameter.\n")
 		message ("Data categories: %s\n" % ", ".join(data_categories))
-		message ("Options: -nosimplify, -debug, -tag, -geojson\n\n")
+		message ("Options: -nosimplify, -debug, -tag, -elvis, -geojson\n\n")
 		sys.exit()
 
 	# Get municipality
