@@ -68,7 +68,7 @@ n50osm.py
   - Centerline waterway=river included in N50 source (earlier from NVE Elvenett)
   - Optimized matching of NVE Elvenett for identifying connected waterways
   - Support for future waterway=ditch and canal
-  - Supports man_made=quay and breakwater separated from caostline
+  - Supports man_made=quay and breakwater separated from coastline
   - Also summarizes source dates in histogram table
 * 1.8: Support historic municipalities; Output municipality boarder file; Optimized name selection; Minor bug fixes.
 * 1.7: Improved handling of rivers and streams:
