@@ -64,6 +64,7 @@ Paramters:
 ### Changelog
 
 n50osm.py
+* 2.1: Further adjustments to new 2023 data version + no longer assuming that river centerlines have correct direction.
 * 2.0: Supports new Kartverket 2023 version of N50:
   - Centerline waterway=river included in N50 source (earlier from NVE Elvenett)
   - Optimized matching of NVE Elvenett for identifying connected waterways
