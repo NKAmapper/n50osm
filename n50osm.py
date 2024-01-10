@@ -16,7 +16,7 @@ from xml.etree import ElementTree as ET
 import utm
 
 
-version = "2.0.0"
+version = "2.1.0"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
@@ -77,6 +77,11 @@ segment_sorting_order = [  # High priority will ensure longer ways
 	'Arealbrukgrense', 'FiktivDelelinje']
 
 osm_tags = {
+	# AdministrativeOmrader
+
+	'Grunnlinjepunkt':		{ 'boundary': 'point' },
+	'Teiggrensepunkt':		{ 'boundary': 'marker' },
+
 	# Arealdekke
 
 	'Alpinbakke':			{ 'landuse': 'winter_sports', 'piste:type': 'downhill' },  # Later also area=yes for closed ways
@@ -238,12 +243,17 @@ def tag_object(feature_type, geometry_type, properties, feature):
 		if "icaoKode" in properties and properties['icaoKode'] != "XXXX":
 			tags['icao'] = properties['icaoKode']			
 
-	elif geometry_type == "område" and feature_type == "SportIdrettPlass":
+	elif feature_type == "SportIdrettPlass" and geometry_type == "område":
 		if len(feature['coordinates']) > 1:
 			tags['leisure'] = "track"
 #			tags['area'] = "yes"
 		else:
 			tags['leisure'] = "pitch"
+
+		if "grensepunkttype" in properties and properties['grensepunkttype'] == "58":  # Grenserøys
+			tags['man_made'] = "cairn"
+		if "grensepunktnummer" in properties and properties['grensepunktnummer']:
+			tags['ref'] = properties['grensepunktnummer']
 
 	# Then conversion dict
 
@@ -281,6 +291,13 @@ def tag_object(feature_type, geometry_type, properties, feature):
 			tags['boundary'] = "protected_area"
 		else:
 			tags['leisure'] = "nature_reserve"
+
+	if "grensepunkttype" in properties and properties['grensepunkttype'] == "58":  # Grenserøys
+		tags['man_made'] = "cairn"
+	if "grensepunktnummer" in properties:
+		tags['ref'] = properties['grensepunktnummer']
+	if "grunnlinjepunktnummer" in properties:
+		tags['ref'] = properties['grunnlinjepunktnummer']
 
 	if "lengde" in properties and feature_type == "Hoppbakke":
 		tags['ref'] = "K" + properties['lengde']
@@ -1265,11 +1282,16 @@ def load_municipality_boundary(filename):
 	if historic and historic['year'] >= "2019":
 		boundary_url = "https://nedlasting.geonorge.no/geonorge/Basisdata/Kommuner%s/GeoJSON/" % historic['year']
 		boundary_filename = "Basisdata_%s_%s_4258_Kommuner%s_GeoJSON" % (historic['id'], historic['name'], historic['year'])
-		collection = "administrative_enheter%s." % historic['year']
+		boundary_name = historic['name']
+		if historic['year'] < "2021":
+			collection = "administrative_enheter%s.kommune" % historic['year']
+		else:
+			collection = "administrative_enheter.kommune"
 	else:
 		boundary_url = "https://nedlasting.geonorge.no/geonorge/Basisdata/Kommuner/GeoJSON/"
 		boundary_filename = "Basisdata_%s_%s_4258_Kommuner_GeoJSON" % (municipality_id, municipality_name)
-		collection = "administrative_enheter." 
+		boundary_name = municipality_name
+		collection = "Kommune"
 
 	boundary_filename = clean_filename(boundary_filename)
 	request = urllib.request.Request(boundary_url + boundary_filename + ".zip", headers=header)
@@ -1280,17 +1302,19 @@ def load_municipality_boundary(filename):
 	file.close()
 	file_in.close()
 
-	# Establish list of boundary segments
+	# Get full boundary, incl. exclaves and enclaves
 
-	for feature in boundary_data[ collection + "kommune" ]['features']:  # Incl. exclaves and multiple polygons (Kinn)
+	for feature in boundary_data[ collection ]['features']:  # Incl. exclaves/multiple polygons (Kinn, Ålesund)
 		patches = []
 		for boundary in feature['geometry']['coordinates']:  # Incl. enclaves
 			polygon = [ ( point[0], point[1] ) for point in boundary ]  # Get tuples
 			patches.append( simplify_line(polygon, 1) )
 		municipality_border.append(patches)
 
+	# Get list of boundary segments
+
 	for boundary_type, boundary_collection in iter(boundary_data.items()):
-		if "kommunegrense" in boundary_type or "fylkesgrense" in boundary_type or "riksgrense" in boundary_type:  # Boundary segments
+		if any(name in boundary_type for name in ["Grense", "kommunegrense", "fylkesgrense", "riksgrense"]):  # Boundary segments
 			for boundary in boundary_collection['features']:
 				polygon = [ ( point[0], point[1] ) for point in boundary['geometry']['coordinates'] ]  # Get tuples
 				boundary['geometry']['coordinates'] = simplify_line(polygon, 1)
@@ -1299,14 +1323,14 @@ def load_municipality_boundary(filename):
 	# Save geojson boundary file
 
 	if border_output:
-		feature = boundary_data[ collection + "kommune" ]['features'][0]
+		feature = boundary_data[ collection ]['features'][0]
 		feature['properties'] = {
-			'KOMMUNE': feature['properties']['navn'][0]['navn'],
+			'KOMMUNE': boundary_name,
 			'REF': feature['properties']['kommunenummer']
 		}
 		filename2 = filename.replace("n50", "border").replace("_Arealdekke", "").replace("_debug", "") + ".geojson"
 		file = open(filename2, "w")
-		json.dump(boundary_data[ collection + "kommune" ], file, indent=2, ensure_ascii=False)
+		json.dump(boundary_data[ collection ], file, indent=2, ensure_ascii=False)
 		file.close()
 		message ("Saved municipality boundary to '%s'\n" % filename2)
 
@@ -1391,8 +1415,8 @@ def load_nve_rivers(filename):
 	for feature in features:
 		if feature['object'] in ["ElvBekk", "Elv", "KanalGrøft", "ElvMidtlinje", "ElvelinjeFiktiv"]:
 			[ feature['min_bbox'], feature['max_bbox'] ] = get_bbox(feature['coordinates'])	
-			if feature['object'] == "ElvMidtlinje":
-				feature['direction'] = "Midtlinje"  # River center lines have correct direction in N50 (object introduced 2023)
+#			if feature['object'] == "ElvMidtlinje":
+#				feature['direction'] = "Midtlinje"  # River center lines have correct direction in N50 (object introduced 2023)
 
 
 	# Pass 2: Identify river centerlines for riverbanks + within municipality
@@ -2919,8 +2943,8 @@ def fix_stream_direction():
 					}
 			ele_list.add(feature['coordinates'][0])
 			ele_list.add(feature['coordinates'][-1])
-			if feature['object'] == "ElvMidtlinje":  # In case NVE river matching not run
-				feature['direction'] = "Midtlinje"
+#			if feature['object'] == "ElvMidtlinje":  # In case NVE river matching not run
+#				feature['direction'] = "Midtlinje"
 			stream_count += 1
 
 	message ("\t%i streams\n" % stream_count)
@@ -3854,7 +3878,9 @@ if __name__ == '__main__':
 	if data_category == "BygningerOgAnlegg":
 		load_building_types()
 
-	load_municipality_boundary(output_filename)
+	if data_category == "Arealdekke":
+		load_municipality_boundary(output_filename)
+
 	load_n50_data(municipality_id, municipality_name, data_category)
 
 	if json_output:
