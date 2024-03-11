@@ -16,34 +16,35 @@ from xml.etree import ElementTree as ET
 import utm
 
 
-version = "2.1.0"
+version = "2.1.1"
 
 header = {"User-Agent": "nkamapper/n50osm"}
 
 ssr_folder = "~/Jottacloud/osm/stedsnavn/"  # Folder containing import SSR files (default folder tried first)
 
-coordinate_decimals = 7	  # Decimals in coordinate output
-island_size = 100000  	  # Minimum square meters for place=island vs place=islet
-lake_ele_size = 2000  	  # Minimum square meters for fetching elevation
-max_stream_error = 1.0 	  # Minimum meters of elevation difference for turning direction of streams
-simplify_factor = 0.2     # Threshold for simplification
-max_combine_members = 10  # Maximum members for a wood feature to be combined
-max_connected_area = 20   # Maximum area of ÅpentOmråde to be simplified (m2)
-historic = {}			  # Get historic municipality, otherwise empty for current
+coordinate_decimals = 7	 	# Decimals in coordinate output
+island_size = 100000  	 	# Minimum square meters for place=island vs place=islet
+lake_ele_size = 2000  	 	# Minimum square meters for fetching elevation
+max_stream_error = 1.0 	 	# Minimum meters of elevation difference for turning direction of streams
+simplify_factor = 0.2    	# Threshold for simplification
+max_combine_members = 10 	# Maximum members for a wood feature to be combined
+max_connected_area = 20  	# Maximum area of ÅpentOmråde to be simplified (m2)
+historic = {}			 	# Get historic municipality, otherwise empty for current
 
-debug =         False	# Include debug tags and unused segments
-n50_tags =      False	# Include property tags from N50 in output
-json_output =   False	# Output complete and unprocessed geometry in geojson format
-elvis_output =  False	# Output NVE river/stream network in geojson format
-border_output = True	# Output municipality border
-no_duplicate =  True 	# Remove short river/stream duplicates along municipality boundary
-turn_stream =   True 	# Load elevation data to check direction of streams
-lake_ele =      True 	# Load elevation for lakes
-get_name =      True 	# Load SSR place names
-get_nve =       True 	# Load NVE lake and river data
-merge_node =    True 	# Merge common nodes at intersections
-simplify =      True 	# Simplify geometry lines
-merge_grid =    True 	# Merge polygon grids (wood and rivers)
+debug =            False	# Include debug tags and unused segments
+n50_tags =         False	# Include property tags from N50 in output
+json_output =      False	# Output complete and unprocessed geometry in geojson format
+elvis_output =     False	# Output NVE river/stream network in geojson format
+elvis_centerline = False 	# Use river centerlines from Elvis (override any N50 centerlines)
+border_output =    True		# Output municipality border
+no_duplicate =     True 	# Remove short river/stream duplicates along municipality boundary
+turn_stream =      True 	# Load elevation data to check direction of streams
+lake_ele =         True 	# Load elevation for lakes
+get_name =         True 	# Load SSR place names
+get_nve =          True 	# Load NVE lake and river data
+merge_node =       True 	# Merge common nodes at intersections
+simplify =         True 	# Simplify geometry lines
+merge_grid =       True 	# Merge polygon grids (wood and rivers)
 
 data_categories = ["AdministrativeOmrader", "Arealdekke", "BygningerOgAnlegg", "Hoyde", "Restriksjonsomrader", "Samferdsel", "Stedsnavn"]
 
@@ -730,9 +731,9 @@ def parse_coordinates (coord_text):
 
 
 
-# Get name or id of municipality from GeoNorge api
+# Get current name or id of municipality from GeoNorge api
 
-def get_municipality_name2 (query):
+def get_present_municipality_name (query):
 
 	if query.isdigit():
 		url = "https://ws.geonorge.no/kommuneinfo/v1/kommuner/" + query
@@ -753,8 +754,9 @@ def get_municipality_name2 (query):
 		result = json.load(file)
 		file.close()
 		municipality_name = result['kommunenavnNorsk']
-		municipality_bbox = [ result['avgrensningsboks']['coordinates'][0][0], result['avgrensningsboks']['coordinates'][0][2]]
-		return (query, municipality_name, municipality_bbox)
+#		municipality_bbox = [ result['avgrensningsboks']['coordinates'][0][0], result['avgrensningsboks']['coordinates'][0][2]]
+#		return (query, municipality_name, municipality_bbox)
+		return (query, municipality_name, None)
 
 	else:
 		result = json.load(file)
@@ -762,8 +764,9 @@ def get_municipality_name2 (query):
 		if result['antallTreff'] == 1:
 			municipality_id = result['kommuner'][0]['kommunenummer']
 			municipality_name = result['kommuner'][0]['kommunenavnNorsk']
-			municipality_bbox = [ result['kommuner'][0]['avgrensningsboks']['coordinates'][0][0], result['kommuner'][0]['avgrensningsboks']['coordinates'][0][2] ]
-			return (municipality_id, municipality_name, municipality_bbox)
+#			municipality_bbox = [ result['kommuner'][0]['avgrensningsboks']['coordinates'][0][0], result['kommuner'][0]['avgrensningsboks']['coordinates'][0][2] ]
+#			return (municipality_id, municipality_name, municipality_bbox)
+			return (municipality_id, municipality_name, None)
 		else:
 			municipalities = []
 			for municipality in result['kommuner']:
@@ -771,9 +774,14 @@ def get_municipality_name2 (query):
 			sys.exit("\tMore than one municipality found: %s\n\n" % ", ".join(municipalities))
 
 
-# Get municipality info
+# Get municipality info, including for historic municiplaities
 
 def get_municipality_name (query, get_historic=False):
+
+	# API below cuerrently do not support 2024 municipality reform
+
+	if not get_historic:
+		return get_present_municipality_name(query)
 
 	# Search by municipality ref or name
 
@@ -1421,7 +1429,7 @@ def load_nve_rivers(filename):
 
 	# Pass 2: Identify river centerlines for riverbanks + within municipality
 
-	if historic and historic['year'] < "2023":
+	if historic and historic['year'] < "2023" or elvis_centerline:
 
 		message ("\tIdentify river center lines ... ")
 
@@ -1462,7 +1470,7 @@ def load_nve_rivers(filename):
 					'type': 'LineString',
 					'gml_id': "Elvis",
 					'elvis': river['attributes']['elvId'],  # Identification of elvis source + river branch id
-					'direction': 'Elvis',  # Correct direction in Elvis
+					'direction': 'Elvis',  # Correct direction in Elvis !
 					'coordinates': coordinates,
 					'members': [],
 					'min_bbox': river['min_bbox'],
@@ -2951,13 +2959,13 @@ def fix_stream_direction():
 	if stream_count == 0:
 		return
 
-	# Include lakes as junctions
+	# Include lakes as junctions if no centerlines
 
 	junction_set = set(junctions.keys())
 	lake_count = 0
 
 	water_polygons = ["Innsjø", "InnsjøRegulert", "ElvBekk"]
-	if not get_nve or historic and historic['year'] < "2023":
+	if not get_nve or historic and historic['year'] < "2023" and not elvis_centerline:
 		water_polygons.append("Elv")
 
 	for feature in features:
