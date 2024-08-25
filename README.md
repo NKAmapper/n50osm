@@ -109,3 +109,5 @@ n50merge.py
 * [NVE lake database](https://www.nve.no/karttjenester/kartdata/vassdragsdata/innsjodatabase/)
 * [SSR place name files](https://obtitus.github.io/ssr2_to_osm_data/)
 * [topo2osm](https://github.com/osmno/topo2osm) on GitHub.
+* [topofix](https://github.com/osmno/topofix) on GitHub - fix topo problems and add water names.
+* [peak2osm](https://github.com/osmno/peak2osm) on GitHub - add peak names.
